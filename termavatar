@@ -1,0 +1,229 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPTDIR="$(cd "$(dirname "$0")" && pwd)"
+CONFDIR="$HOME/.termavatar"
+CONFFILE="$CONFDIR/config"
+AVATARDIR="$CONFDIR/avatars"
+ORIGDIR="$AVATARDIR/originals"
+LOGFILE="$CONFDIR/watcher.log"
+
+WATCHER="termavatar-watcher"
+OVERLAY="termavatar-overlay"
+
+ensure_dirs() {
+    mkdir -p "$CONFDIR" "$AVATARDIR" "$ORIGDIR"
+    [ -f "$CONFFILE" ] || touch "$CONFFILE"
+}
+
+find_bin() {
+    local name="$1"
+    if [ -x "$SCRIPTDIR/$name" ]; then
+        echo "$SCRIPTDIR/$name"
+    elif command -v "$name" >/dev/null 2>&1; then
+        command -v "$name"
+    else
+        echo ""
+    fi
+}
+
+usage() {
+    cat <<EOF
+Usage: termavatar <command> [args]
+
+Commands:
+  add <name> <photo> [corner] [size]   Add an avatar
+  remove <name>                        Remove an avatar
+  list                                 Show avatars, overlays, watcher status
+  watch                                Start the watcher daemon
+  unwatch                              Stop watcher and all overlays
+  restart                              Restart the watcher
+  conf                                 Print config file
+  edit                                 Open config in \$EDITOR
+  log                                  Show last 20 lines of watcher log
+EOF
+}
+
+cmd_add() {
+    local name="${1:-}"
+    local photo="${2:-}"
+    local corner="${3:-br}"
+    local size="${4:-90}"
+
+    if [ -z "$name" ] || [ -z "$photo" ]; then
+        echo "Usage: termavatar add <name> <photo> [corner] [size]" >&2
+        exit 1
+    fi
+
+    if [ ! -f "$photo" ]; then
+        echo "Error: file not found: $photo" >&2
+        exit 1
+    fi
+
+    ensure_dirs
+
+    local base
+    base="$(basename "$photo")"
+    cp "$photo" "$ORIGDIR/$base"
+
+    local outfile="$AVATARDIR/${name}.png"
+    python3 "$SCRIPTDIR/crop_avatar.py" "$ORIGDIR/$base" "$outfile"
+
+    # Remove existing entry for this name, then append
+    if [ -f "$CONFFILE" ]; then
+        local tmp
+        tmp="$(grep -v "^${name}|" "$CONFFILE" 2>/dev/null || true)"
+        echo "$tmp" > "$CONFFILE"
+    fi
+    echo "${name}|${name}|${outfile}|${corner}|${size}" >> "$CONFFILE"
+
+    # Clean blank lines
+    sed -i '' '/^$/d' "$CONFFILE" 2>/dev/null || true
+
+    echo "Added avatar '$name' (corner=$corner, size=$size)"
+}
+
+cmd_remove() {
+    local name="${1:-}"
+    if [ -z "$name" ]; then
+        echo "Usage: termavatar remove <name>" >&2
+        exit 1
+    fi
+
+    ensure_dirs
+
+    if ! grep -q "^${name}|" "$CONFFILE" 2>/dev/null; then
+        echo "Error: avatar '$name' not found in config" >&2
+        exit 1
+    fi
+
+    local tmp
+    tmp="$(grep -v "^${name}|" "$CONFFILE")"
+    echo "$tmp" > "$CONFFILE"
+    sed -i '' '/^$/d' "$CONFFILE" 2>/dev/null || true
+
+    echo "Removed avatar '$name'"
+}
+
+cmd_list() {
+    ensure_dirs
+
+    echo "=== Configured Avatars ==="
+    if [ -s "$CONFFILE" ]; then
+        printf "%-15s %-8s %-6s %s\n" "NAME" "CORNER" "SIZE" "IMAGE"
+        while IFS='|' read -r keyword name image corner size; do
+            [ -z "$keyword" ] && continue
+            [[ "$keyword" == \#* ]] && continue
+            printf "%-15s %-8s %-6s %s\n" "$name" "$corner" "${size}px" "$image"
+        done < "$CONFFILE"
+    else
+        echo "  (none)"
+    fi
+
+    echo ""
+    echo "=== Running Overlays ==="
+    shopt -s nullglob
+    local pids
+    pids=($(pgrep -f "$OVERLAY" 2>/dev/null || true))
+    if [ ${#pids[@]} -gt 0 ]; then
+        for p in "${pids[@]}"; do
+            echo "  PID $p"
+        done
+    else
+        echo "  (none)"
+    fi
+
+    echo ""
+    echo "=== Watcher ==="
+    if pgrep -f "$WATCHER" >/dev/null 2>&1; then
+        echo "  Running (PID $(pgrep -f "$WATCHER"))"
+    else
+        echo "  Not running"
+    fi
+}
+
+cmd_watch() {
+    ensure_dirs
+
+    if pgrep -f "$WATCHER" >/dev/null 2>&1; then
+        echo "Watcher is already running (PID $(pgrep -f "$WATCHER"))"
+        return
+    fi
+
+    local bin
+    bin="$(find_bin "$WATCHER")"
+    if [ -z "$bin" ]; then
+        echo "Error: $WATCHER not found in $SCRIPTDIR or PATH" >&2
+        exit 1
+    fi
+
+    nohup "$bin" >> "$LOGFILE" 2>&1 &
+    disown
+    echo "Watcher started (PID $!), logging to $LOGFILE"
+}
+
+cmd_unwatch() {
+    local killed=0
+
+    shopt -s nullglob
+    local pids
+    pids=($(pgrep -f "$OVERLAY" 2>/dev/null || true))
+    for p in "${pids[@]}"; do
+        kill "$p" 2>/dev/null && killed=$((killed + 1))
+    done
+
+    pids=($(pgrep -f "$WATCHER" 2>/dev/null || true))
+    for p in "${pids[@]}"; do
+        kill "$p" 2>/dev/null && killed=$((killed + 1))
+    done
+
+    if [ "$killed" -gt 0 ]; then
+        echo "Stopped $killed process(es)"
+    else
+        echo "Nothing was running"
+    fi
+}
+
+cmd_restart() {
+    cmd_unwatch
+    sleep 0.3
+    cmd_watch
+}
+
+cmd_conf() {
+    ensure_dirs
+    if [ -s "$CONFFILE" ]; then
+        cat "$CONFFILE"
+    else
+        echo "(config is empty)"
+    fi
+}
+
+cmd_edit() {
+    ensure_dirs
+    local editor="${EDITOR:-vi}"
+    "$editor" "$CONFFILE"
+}
+
+cmd_log() {
+    if [ -f "$LOGFILE" ]; then
+        tail -20 "$LOGFILE"
+    else
+        echo "No log file found at $LOGFILE"
+    fi
+}
+
+# --- Main ---
+
+case "${1:-}" in
+    add)      shift; cmd_add "$@" ;;
+    remove)   shift; cmd_remove "$@" ;;
+    list)     cmd_list ;;
+    watch)    cmd_watch ;;
+    unwatch)  cmd_unwatch ;;
+    restart)  cmd_restart ;;
+    conf)     cmd_conf ;;
+    edit)     cmd_edit ;;
+    log)      cmd_log ;;
+    *)        usage ;;
+esac
