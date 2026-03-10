@@ -18,6 +18,9 @@ The avatars behave like a natural part of the terminal window. They float above 
 
 - **Title-based matching** -- assign avatars based on substring matching against terminal window titles
 - **Proper z-order layering** -- avatars float above their terminal but hide behind other apps, behaving like a native window element
+- **Minimized terminal detection** -- when you minimize a terminal, its avatar parks on the desktop as a reminder (prefers secondary monitor)
+- **Click to restore** -- click a parked avatar to un-minimize and restore its terminal window
+- **Draggable when parked** -- drag parked avatars to any position you like; they remember the position
 - **Multi-terminal support** -- works with Ghostty, iTerm2, Kitty, WezTerm, Alacritty, and Terminal.app
 - **Corner placement** -- place the avatar in any corner of the terminal window (top-left, top-right, bottom-left, bottom-right)
 - **Automatic circular cropping** -- any photo you provide is automatically cropped and masked into a circle
@@ -25,6 +28,7 @@ The avatars behave like a natural part of the terminal window. They float above 
 - **Background watcher** -- a daemon monitors window titles and spawns or removes overlays automatically
 - **Hot-reload** -- edit the config file and changes take effect within seconds, no restart required
 - **Simple CLI** -- one command to add, remove, list, or manage avatars
+- **Low CPU usage** -- overlay updates at 10 fps, lightweight enough to run all day
 
 ## Requirements
 
@@ -51,7 +55,7 @@ Before you begin, make sure you have the following:
 ### Step 1: Clone the repository
 
 ```
-git clone https://github.com/youruser/termavatar.git
+git clone https://github.com/zhengyue8/termavatar.git
 cd termavatar
 ```
 
@@ -345,7 +349,7 @@ termavatar has three components:
 
 2. **Watcher** (`termavatar-watcher`) -- a Swift daemon that polls the macOS Accessibility API every 2 seconds to discover terminal windows. When a window title matches a configured keyword, the watcher spawns an overlay process. When the window disappears, the watcher terminates the corresponding overlay.
 
-3. **Overlay** (`termavatar-overlay`) -- a Swift application that creates a borderless, transparent NSWindow displaying a circular avatar image. It uses `CGWindowListCopyWindowInfo` to find the target terminal's Core Graphics window ID, then calls `window.order(.above, relativeTo:)` to layer the avatar directly above that specific window. This is what makes avatars hide behind other apps when you switch focus, instead of floating on top of everything. The overlay updates its position at 30 fps to track window moves and resizes.
+3. **Overlay** (`termavatar-overlay`) -- a Swift application that creates a borderless, transparent NSWindow displaying a circular avatar image. It uses `CGWindowListCopyWindowInfo` to find the target terminal's Core Graphics window ID, then calls `window.order(.above, relativeTo:)` to layer the avatar directly above that specific window. This is what makes avatars hide behind other apps when you switch focus, instead of floating on top of everything. The overlay updates its position at 10 fps to track window moves and resizes. When the terminal is minimized, the overlay detects `kAXMinimizedAttribute` and parks itself on the desktop; clicking it calls `AXUIElementSetAttributeValue` and `AXUIElementPerformAction(kAXRaiseAction)` to restore the specific window.
 
 When you run `termavatar add`, the CLI also invokes a Python script (`crop_avatar.py`) that uses Pillow to center-crop the input image to a square, resize it, and apply a circular alpha mask.
 

@@ -1,8 +1,15 @@
 // Overlay.swift — termavatar
 // A floating circular avatar that attaches to a terminal window.
 //
-// Build:  swiftc -O -o termavatar Sources/Overlay.swift -framework AppKit -framework CoreGraphics -framework ApplicationServices
-// Usage:  termavatar <image> [--name N] [--size N] [--corner tl|tr|bl|br] [--title keyword] [--app name] [--opacity N]
+// Features:
+//   - Tracks terminal window position at 10 fps via Accessibility API
+//   - Z-orders above terminal but below other apps (.normal level)
+//   - Detects minimized terminals; parks avatar on desktop (draggable)
+//   - Click parked avatar to un-minimize and restore its terminal
+//   - Right-click avatar to quit
+//
+// Build:  swiftc -O -o termavatar-overlay Sources/Overlay.swift -framework AppKit -framework CoreGraphics -framework ApplicationServices
+// Usage:  termavatar-overlay <image> [--name N] [--size N] [--corner tl|tr|bl|br] [--title keyword] [--app name] [--opacity N]
 //
 // Requires macOS Accessibility permission (System Settings > Privacy > Accessibility).
 
@@ -13,84 +20,157 @@ import Foundation
 
 // MARK: - Supported Terminals
 
-/// Terminal apps recognized by default. The --app flag matches against the
-/// window owner name (case-insensitive substring), so short names work fine.
 let supportedTerminals = [
     "Ghostty", "iTerm2", "kitty", "WezTerm", "Alacritty", "Terminal"
 ]
+
+// MARK: - Window State
+
+enum WindowState {
+    case visible(frame: CGRect)
+    case minimized
+    case notFound
+}
+
+// MARK: - Minimized Avatar Dock
+
+/// When terminals are minimized, avatars park on a secondary screen (or main
+/// if only one display). Multiple avatars coordinate positions via slot files
+/// in ~/.termavatar/dock/.
+struct MinimizedDock {
+    static let dockDir = (NSHomeDirectory() as NSString).appendingPathComponent(".termavatar/dock")
+    static let spacing: CGFloat = 110
+    static let bottomMargin: CGFloat = 80
+
+    /// Prefers secondary (non-built-in) screen for parking avatars.
+    static var dockScreen: NSScreen {
+        let screens = NSScreen.screens
+        if screens.count > 1 {
+            for s in screens where s != NSScreen.main {
+                return s
+            }
+        }
+        return NSScreen.main ?? screens[0]
+    }
+
+    /// Claim a slot and return the desktop position (AppKit coordinates).
+    static func claimSlot(keyword: String) -> NSPoint? {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: dockDir, withIntermediateDirectories: true)
+        let slotFile = (dockDir as NSString).appendingPathComponent(keyword)
+        if !fm.fileExists(atPath: slotFile) {
+            fm.createFile(atPath: slotFile, contents: nil)
+        }
+
+        guard let files = try? fm.contentsOfDirectory(atPath: dockDir) else { return nil }
+        let sorted = files.sorted()
+        guard let idx = sorted.firstIndex(of: keyword) else { return nil }
+
+        let screen = dockScreen
+        let frame = screen.visibleFrame
+        let totalWidth = CGFloat(sorted.count) * spacing
+        let startX = frame.origin.x + (frame.width - totalWidth) / 2
+
+        return NSPoint(
+            x: startX + CGFloat(idx) * spacing,
+            y: frame.origin.y + bottomMargin
+        )
+    }
+
+    /// Release slot when terminal is no longer minimized.
+    static func releaseSlot(keyword: String) {
+        let slotFile = (dockDir as NSString).appendingPathComponent(keyword)
+        try? FileManager.default.removeItem(atPath: slotFile)
+    }
+}
 
 // MARK: - Window Tracker
 
 /// Finds a terminal window using the Accessibility API (for title matching)
 /// and CGWindowList (for the Core Graphics window ID needed for z-ordering).
+/// Also stores the AXUIElement so we can un-minimize a specific window.
 final class WindowTracker {
     let appName: String
     let titleKeyword: String?
 
     private(set) var lastFrame: CGRect = .zero
     private(set) var targetCGWindowID: CGWindowID = kCGNullWindowID
+    private(set) var matchedAXWindow: AXUIElement?
+    private(set) var matchedAppPID: pid_t = 0
 
     init(appName: String, titleKeyword: String?) {
         self.appName = appName
         self.titleKeyword = titleKeyword
     }
 
-    /// Returns the frame of the first matching window, or nil if not found.
-    /// As a side effect, resolves `targetCGWindowID` for z-order placement.
-    func findTargetWindow() -> CGRect? {
+    /// Returns the window state: visible with frame, minimized, or not found.
+    func getWindowState() -> WindowState {
         let apps = NSWorkspace.shared.runningApplications.filter {
             $0.localizedName?.localizedCaseInsensitiveContains(appName) == true
         }
+
         for app in apps {
-            if let frame = findWindowInApp(pid: app.processIdentifier) {
+            let axApp = AXUIElementCreateApplication(app.processIdentifier)
+            var ref: CFTypeRef?
+            AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &ref)
+            guard let axWindows = ref as? [AXUIElement] else { continue }
+
+            for axWin in axWindows {
+                // Title filter
+                if let keyword = titleKeyword {
+                    var titleRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(axWin, kAXTitleAttribute as CFString, &titleRef)
+                    let title = titleRef as? String ?? ""
+                    guard title.contains(keyword) else { continue }
+                }
+
+                // Remember for un-minimize
+                matchedAXWindow = axWin
+                matchedAppPID = app.processIdentifier
+
+                // Check minimized
+                var minimizedRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(axWin, kAXMinimizedAttribute as CFString, &minimizedRef)
+                if let minimized = minimizedRef as? Bool, minimized {
+                    return .minimized
+                }
+
+                // Read position and size
+                var posRef: CFTypeRef?
+                var sizeRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
+                AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
+                guard let pv = posRef, let sv = sizeRef else { continue }
+
+                var pos = CGPoint.zero
+                var size = CGSize.zero
+                AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
+                AXValueGetValue(sv as! AXValue, .cgSize, &size)
+
+                guard size.width > 100, size.height > 100 else { continue }
+
+                let frame = CGRect(origin: pos, size: size)
                 lastFrame = frame
                 targetCGWindowID = resolveCGWindowID(matching: frame)
-                return frame
+
+                return .visible(frame: frame)
             }
         }
-        return nil
+        return .notFound
+    }
+
+    /// Un-minimize the matched window, raise it, and bring its app to front.
+    func unminimize() {
+        guard let axWin = matchedAXWindow else { return }
+        AXUIElementSetAttributeValue(axWin, kAXMinimizedAttribute as CFString, false as CFTypeRef)
+        AXUIElementPerformAction(axWin, kAXRaiseAction as CFString)
+        if let app = NSRunningApplication(processIdentifier: matchedAppPID) {
+            app.activate()
+        }
     }
 
     // MARK: Private
 
-    /// Walk the app's AX windows looking for a title match.
-    private func findWindowInApp(pid: pid_t) -> CGRect? {
-        let axApp = AXUIElementCreateApplication(pid)
-        var ref: CFTypeRef?
-        AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &ref)
-        guard let axWindows = ref as? [AXUIElement] else { return nil }
-
-        for axWin in axWindows {
-            // Title filter (if provided)
-            if let keyword = titleKeyword {
-                var titleRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(axWin, kAXTitleAttribute as CFString, &titleRef)
-                let title = titleRef as? String ?? ""
-                guard title.contains(keyword) else { continue }
-            }
-
-            // Read position and size
-            var posRef: CFTypeRef?
-            var sizeRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
-            AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
-            guard let pv = posRef, let sv = sizeRef else { continue }
-
-            var pos = CGPoint.zero
-            var size = CGSize.zero
-            AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
-            AXValueGetValue(sv as! AXValue, .cgSize, &size)
-
-            // Skip tiny or zero-sized windows (e.g. menu extras)
-            guard size.width > 100, size.height > 100 else { continue }
-
-            return CGRect(origin: pos, size: size)
-        }
-        return nil
-    }
-
-    /// Find the CGWindowID whose bounds match the given AX frame.
-    /// We need this because `window.order(.above, relativeTo:)` takes a CG ID.
     private func resolveCGWindowID(matching frame: CGRect) -> CGWindowID {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
@@ -121,6 +201,46 @@ final class WindowTracker {
     }
 }
 
+// MARK: - Draggable Content View
+
+/// Handles mouse drag (to reposition parked avatar) and click (to un-minimize).
+final class DraggableView: NSView {
+    weak var overlayApp: OverlayApp?
+    private var dragStart: NSPoint?
+    private var windowStart: NSPoint?
+    private var didDrag = false
+
+    override func mouseDown(with event: NSEvent) {
+        guard overlayApp?.isParkedOnDesktop == true else { return }
+        dragStart = NSEvent.mouseLocation
+        windowStart = window?.frame.origin
+        didDrag = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard overlayApp?.isParkedOnDesktop == true,
+              let start = dragStart, let winStart = windowStart else { return }
+        let current = NSEvent.mouseLocation
+        let dx = current.x - start.x
+        let dy = current.y - start.y
+        if abs(dx) > 3 || abs(dy) > 3 { didDrag = true }
+        window?.setFrameOrigin(NSPoint(x: winStart.x + dx, y: winStart.y + dy))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard overlayApp?.isParkedOnDesktop == true else { return }
+        if didDrag {
+            if let origin = window?.frame.origin {
+                overlayApp?.userParkedPosition = origin
+            }
+        } else {
+            overlayApp?.unminimizeTerminal()
+        }
+        dragStart = nil
+        windowStart = nil
+    }
+}
+
 // MARK: - Overlay Application Delegate
 
 final class OverlayApp: NSObject, NSApplicationDelegate {
@@ -139,6 +259,11 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var tracker: WindowTracker!
     private var timer: Timer?
+
+    // Minimized dock state
+    fileprivate var isParkedOnDesktop = false
+    /// User's preferred position when parked (set by dragging). Nil = use dock default.
+    var userParkedPosition: NSPoint? = nil
 
     init(imagePath: String, agentName: String, avatarSize: CGFloat,
          corner: String, opacity: CGFloat, appTarget: String, titleKeyword: String?) {
@@ -174,7 +299,6 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         let winW = avatarSize + padding * 2
         let winH = avatarSize + labelHeight + padding * 2
 
-        // Borderless, transparent window — starts offscreen
         window = NSWindow(
             contentRect: NSRect(x: -9999, y: -9999, width: winW, height: winH),
             styleMask: [.borderless],
@@ -187,16 +311,13 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.ignoresMouseEvents = false
         window.alphaValue = opacity
-
-        // KEY: Use .normal level, not .floating. We reposition in z-order
-        // each frame via window.order(.above, relativeTo: targetCGWindowID).
-        // This ensures the avatar sits above the terminal but below other apps.
         window.level = .normal
         window.collectionBehavior = [.canJoinAllSpaces, .stationary]
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: winW, height: winH))
+        let content = DraggableView(frame: NSRect(x: 0, y: 0, width: winW, height: winH))
+        content.overlayApp = self
 
-        // Drop shadow backing (circle behind avatar)
+        // Drop shadow backing
         let shadowView = NSView(frame: NSRect(x: padding, y: labelHeight + padding,
                                               width: avatarSize, height: avatarSize))
         shadowView.wantsLayer = true
@@ -252,61 +373,87 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
     // MARK: Position Tracking
 
     private func startTracking() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 10.0, repeats: true) { [weak self] _ in
             self?.tick()
         }
         RunLoop.current.add(timer!, forMode: .common)
         tick()
     }
 
-    /// Called at ~30 fps. Updates overlay position and z-order.
+    /// Called at ~10 fps. Updates overlay position and z-order.
     private func tick() {
-        guard let targetFrame = tracker.findTargetWindow() else {
-            // Hide when the target window is not visible
+        let state = tracker.getWindowState()
+
+        switch state {
+        case .notFound:
             window.alphaValue = 0
-            return
-        }
-        window.alphaValue = opacity
+            if isParkedOnDesktop {
+                MinimizedDock.releaseSlot(keyword: titleKeyword ?? agentName)
+                isParkedOnDesktop = false
+            }
 
-        // Place overlay directly above the target window in z-order.
-        // Because our window level is .normal (not .floating), the overlay
-        // stays behind any other app the user switches to.
-        let cgID = tracker.targetCGWindowID
-        if cgID != kCGNullWindowID {
-            window.order(.above, relativeTo: Int(cgID))
-        }
+        case .minimized:
+            if !isParkedOnDesktop {
+                isParkedOnDesktop = true
+                window.level = .floating
+                window.alphaValue = opacity
+                if let savedPos = userParkedPosition {
+                    window.setFrameOrigin(savedPos)
+                } else if let dockPos = MinimizedDock.claimSlot(keyword: titleKeyword ?? agentName) {
+                    window.setFrameOrigin(dockPos)
+                }
+                window.orderFrontRegardless()
+            }
 
-        // Convert CG coordinates (top-left origin) to AppKit (bottom-left origin)
-        guard let screen = NSScreen.main else { return }
-        let screenH = screen.frame.height
-        let wSize = window.frame.size
-        let nsTargetY = screenH - targetFrame.origin.y - targetFrame.height
+        case .visible(let targetFrame):
+            if isParkedOnDesktop {
+                MinimizedDock.releaseSlot(keyword: titleKeyword ?? agentName)
+                isParkedOnDesktop = false
+                window.level = .normal
+            }
 
-        let origin: NSPoint
-        switch corner.lowercased() {
-        case "tl", "top-left":
-            origin = NSPoint(
-                x: targetFrame.origin.x + margin,
-                y: nsTargetY + targetFrame.height - wSize.height - margin)
-        case "tr", "top-right":
-            origin = NSPoint(
-                x: targetFrame.origin.x + targetFrame.width - wSize.width - margin,
-                y: nsTargetY + targetFrame.height - wSize.height - margin)
-        case "bl", "bottom-left":
-            origin = NSPoint(
-                x: targetFrame.origin.x + margin,
-                y: nsTargetY + margin)
-        default: // "br", "bottom-right"
-            origin = NSPoint(
-                x: targetFrame.origin.x + targetFrame.width - wSize.width - margin,
-                y: nsTargetY + margin)
-        }
+            window.alphaValue = opacity
 
-        // Only move if position actually changed (avoids unnecessary redraws)
-        if abs(window.frame.origin.x - origin.x) > 0.5 ||
-           abs(window.frame.origin.y - origin.y) > 0.5 {
-            window.setFrameOrigin(origin)
+            let cgID = tracker.targetCGWindowID
+            if cgID != kCGNullWindowID {
+                window.order(.above, relativeTo: Int(cgID))
+            }
+
+            guard let screen = NSScreen.main else { return }
+            let screenH = screen.frame.height
+            let wSize = window.frame.size
+            let nsTargetY = screenH - targetFrame.origin.y - targetFrame.height
+
+            let origin: NSPoint
+            switch corner.lowercased() {
+            case "tl", "top-left":
+                origin = NSPoint(
+                    x: targetFrame.origin.x + margin,
+                    y: nsTargetY + targetFrame.height - wSize.height - margin)
+            case "tr", "top-right":
+                origin = NSPoint(
+                    x: targetFrame.origin.x + targetFrame.width - wSize.width - margin,
+                    y: nsTargetY + targetFrame.height - wSize.height - margin)
+            case "bl", "bottom-left":
+                origin = NSPoint(
+                    x: targetFrame.origin.x + margin,
+                    y: nsTargetY + margin)
+            default: // "br", "bottom-right"
+                origin = NSPoint(
+                    x: targetFrame.origin.x + targetFrame.width - wSize.width - margin,
+                    y: nsTargetY + margin)
+            }
+
+            if abs(window.frame.origin.x - origin.x) > 0.5 ||
+               abs(window.frame.origin.y - origin.y) > 0.5 {
+                window.setFrameOrigin(origin)
+            }
         }
+    }
+
+    /// Called by DraggableView when user clicks the parked avatar.
+    func unminimizeTerminal() {
+        tracker.unminimize()
     }
 
     @objc private func quit() {
@@ -332,7 +479,7 @@ func printUsage() -> Never {
     termavatar — floating avatar for terminal windows
 
     USAGE
-      termavatar <image> [options]
+      termavatar-overlay <image> [options]
 
     OPTIONS
       --name <text>       Label shown below the avatar
@@ -346,9 +493,13 @@ func printUsage() -> Never {
     SUPPORTED TERMINALS
       \(terminals)
 
+    INTERACTIONS
+      - Drag the avatar when its terminal is minimized to reposition it.
+      - Click a parked avatar to un-minimize and restore its terminal.
+      - Right-click the avatar to quit.
+
     NOTES
       Requires Accessibility permission (System Settings > Privacy > Accessibility).
-      Right-click the avatar to quit.
 
     """, stderr)
     exit(0)
