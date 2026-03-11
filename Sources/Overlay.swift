@@ -6,6 +6,7 @@
 //   - Z-orders above terminal but below other apps (.normal level)
 //   - Detects minimized terminals; parks avatar on desktop (draggable)
 //   - Click parked avatar to un-minimize and restore its terminal
+//   - Notification dot + sound when Claude Code needs attention
 //   - Right-click avatar to quit
 //
 // Build:  swiftc -O -o termavatar-overlay Sources/Overlay.swift -framework AppKit -framework CoreGraphics -framework ApplicationServices
@@ -42,7 +43,6 @@ struct MinimizedDock {
     static let spacing: CGFloat = 110
     static let bottomMargin: CGFloat = 80
 
-    /// Prefers secondary (non-built-in) screen for parking avatars.
     static var dockScreen: NSScreen {
         let screens = NSScreen.screens
         if screens.count > 1 {
@@ -53,7 +53,6 @@ struct MinimizedDock {
         return NSScreen.main ?? screens[0]
     }
 
-    /// Claim a slot and return the desktop position (AppKit coordinates).
     static func claimSlot(keyword: String) -> NSPoint? {
         let fm = FileManager.default
         try? fm.createDirectory(atPath: dockDir, withIntermediateDirectories: true)
@@ -77,18 +76,33 @@ struct MinimizedDock {
         )
     }
 
-    /// Release slot when terminal is no longer minimized.
     static func releaseSlot(keyword: String) {
         let slotFile = (dockDir as NSString).appendingPathComponent(keyword)
         try? FileManager.default.removeItem(atPath: slotFile)
     }
 }
 
+// MARK: - Notification Signal
+
+/// File-based notification: Claude Code's Notification hook writes a signal
+/// file to ~/.termavatar/notify/<keyword>. The overlay checks for it and
+/// shows a red dot + plays a sound when it first appears.
+struct NotifySignal {
+    static let notifyDir = (NSHomeDirectory() as NSString).appendingPathComponent(".termavatar/notify")
+
+    static func isActive(keyword: String) -> Bool {
+        let path = (notifyDir as NSString).appendingPathComponent(keyword)
+        return FileManager.default.fileExists(atPath: path)
+    }
+
+    static func clear(keyword: String) {
+        let path = (notifyDir as NSString).appendingPathComponent(keyword)
+        try? FileManager.default.removeItem(atPath: path)
+    }
+}
+
 // MARK: - Window Tracker
 
-/// Finds a terminal window using the Accessibility API (for title matching)
-/// and CGWindowList (for the Core Graphics window ID needed for z-ordering).
-/// Also stores the AXUIElement so we can un-minimize a specific window.
 final class WindowTracker {
     let appName: String
     let titleKeyword: String?
@@ -103,7 +117,6 @@ final class WindowTracker {
         self.titleKeyword = titleKeyword
     }
 
-    /// Returns the window state: visible with frame, minimized, or not found.
     func getWindowState() -> WindowState {
         let apps = NSWorkspace.shared.runningApplications.filter {
             $0.localizedName?.localizedCaseInsensitiveContains(appName) == true
@@ -116,7 +129,6 @@ final class WindowTracker {
             guard let axWindows = ref as? [AXUIElement] else { continue }
 
             for axWin in axWindows {
-                // Title filter
                 if let keyword = titleKeyword {
                     var titleRef: CFTypeRef?
                     AXUIElementCopyAttributeValue(axWin, kAXTitleAttribute as CFString, &titleRef)
@@ -124,18 +136,15 @@ final class WindowTracker {
                     guard title.contains(keyword) else { continue }
                 }
 
-                // Remember for un-minimize
                 matchedAXWindow = axWin
                 matchedAppPID = app.processIdentifier
 
-                // Check minimized
                 var minimizedRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(axWin, kAXMinimizedAttribute as CFString, &minimizedRef)
                 if let minimized = minimizedRef as? Bool, minimized {
                     return .minimized
                 }
 
-                // Read position and size
                 var posRef: CFTypeRef?
                 var sizeRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
@@ -152,14 +161,12 @@ final class WindowTracker {
                 let frame = CGRect(origin: pos, size: size)
                 lastFrame = frame
                 targetCGWindowID = resolveCGWindowID(matching: frame)
-
                 return .visible(frame: frame)
             }
         }
         return .notFound
     }
 
-    /// Un-minimize the matched window, raise it, and bring its app to front.
     func unminimize() {
         guard let axWin = matchedAXWindow else { return }
         AXUIElementSetAttributeValue(axWin, kAXMinimizedAttribute as CFString, false as CFTypeRef)
@@ -169,14 +176,11 @@ final class WindowTracker {
         }
     }
 
-    // MARK: Private
-
     private func resolveCGWindowID(matching frame: CGRect) -> CGWindowID {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return kCGNullWindowID
         }
-
         let tolerance: CGFloat = 3
         for info in list {
             guard let owner = info[kCGWindowOwnerName as String] as? String,
@@ -189,7 +193,6 @@ final class WindowTracker {
                   let h = bounds["Height"] as? CGFloat,
                   (info[kCGWindowLayer as String] as? Int) == 0
             else { continue }
-
             if abs(x - frame.origin.x) < tolerance &&
                abs(y - frame.origin.y) < tolerance &&
                abs(w - frame.width) < tolerance &&
@@ -203,7 +206,6 @@ final class WindowTracker {
 
 // MARK: - Draggable Content View
 
-/// Handles mouse drag (to reposition parked avatar) and click (to un-minimize).
 final class DraggableView: NSView {
     weak var overlayApp: OverlayApp?
     private var dragStart: NSPoint?
@@ -245,7 +247,6 @@ final class DraggableView: NSView {
 
 final class OverlayApp: NSObject, NSApplicationDelegate {
 
-    // Configuration (set once at init)
     private let imagePath: String
     private let agentName: String
     private let avatarSize: CGFloat
@@ -255,15 +256,16 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
     private let titleKeyword: String?
     private let margin: CGFloat = 8
 
-    // Runtime state
     private var window: NSWindow!
     private var tracker: WindowTracker!
     private var timer: Timer?
 
-    // Minimized dock state
     fileprivate var isParkedOnDesktop = false
-    /// User's preferred position when parked (set by dragging). Nil = use dock default.
     var userParkedPosition: NSPoint? = nil
+
+    private var notifyDot: NSView?
+    private var notifyActive = false
+    private var tickCount: Int = 0
 
     init(imagePath: String, agentName: String, avatarSize: CGFloat,
          corner: String, opacity: CGFloat, appTarget: String, titleKeyword: String?) {
@@ -277,21 +279,16 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         super.init()
     }
 
-    // MARK: NSApplicationDelegate
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let image = NSImage(contentsOfFile: imagePath) else {
             fputs("termavatar: cannot load image at \(imagePath)\n", stderr)
             NSApp.terminate(nil)
             return
         }
-
         tracker = WindowTracker(appName: appTarget, titleKeyword: titleKeyword)
         buildWindow(image: image)
         startTracking()
     }
-
-    // MARK: Window Construction
 
     private func buildWindow(image: NSImage) {
         let padding: CGFloat = 6
@@ -301,9 +298,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
 
         window = NSWindow(
             contentRect: NSRect(x: -9999, y: -9999, width: winW, height: winH),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
+            styleMask: [.borderless], backing: .buffered, defer: false
         )
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -317,7 +312,6 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         let content = DraggableView(frame: NSRect(x: 0, y: 0, width: winW, height: winH))
         content.overlayApp = self
 
-        // Drop shadow backing
         let shadowView = NSView(frame: NSRect(x: padding, y: labelHeight + padding,
                                               width: avatarSize, height: avatarSize))
         shadowView.wantsLayer = true
@@ -329,7 +323,6 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         shadowView.layer?.shadowRadius = 5
         content.addSubview(shadowView)
 
-        // Circular avatar image
         let imageView = NSImageView(frame: NSRect(x: padding, y: labelHeight + padding,
                                                   width: avatarSize, height: avatarSize))
         imageView.image = image
@@ -341,7 +334,22 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         imageView.layer?.borderColor = NSColor(white: 1.0, alpha: 0.5).cgColor
         content.addSubview(imageView)
 
-        // Name label below avatar
+        // Notification dot (red circle, top-right of avatar)
+        let dotSize: CGFloat = 12
+        let dot = NSView(frame: NSRect(
+            x: padding + avatarSize - dotSize,
+            y: labelHeight + padding + avatarSize - dotSize,
+            width: dotSize, height: dotSize
+        ))
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = dotSize / 2
+        dot.layer?.backgroundColor = NSColor.systemRed.cgColor
+        dot.layer?.borderWidth = 1.5
+        dot.layer?.borderColor = NSColor.white.cgColor
+        dot.isHidden = true
+        content.addSubview(dot)
+        notifyDot = dot
+
         if !agentName.isEmpty {
             let label = NSTextField(frame: NSRect(x: 0, y: padding - 2,
                                                   width: winW, height: labelHeight))
@@ -352,7 +360,6 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
             label.alignment = .center
             label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
             label.textColor = NSColor(white: 1.0, alpha: 0.95)
-
             let shadow = NSShadow()
             shadow.shadowColor = NSColor(white: 0, alpha: 0.8)
             shadow.shadowOffset = CGSize(width: 0, height: -1)
@@ -361,7 +368,6 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
             content.addSubview(label)
         }
 
-        // Right-click to quit
         let rightClick = NSClickGestureRecognizer(target: self, action: #selector(quit))
         rightClick.buttonMask = 0x2
         content.addGestureRecognizer(rightClick)
@@ -369,8 +375,6 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         window.contentView = content
         window.orderFrontRegardless()
     }
-
-    // MARK: Position Tracking
 
     private func startTracking() {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 10.0, repeats: true) { [weak self] _ in
@@ -380,17 +384,19 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         tick()
     }
 
-    /// Called at ~10 fps. Updates overlay position and z-order.
     private func tick() {
+        tickCount += 1
         let state = tracker.getWindowState()
+        let key = titleKeyword ?? agentName
 
         switch state {
         case .notFound:
             window.alphaValue = 0
             if isParkedOnDesktop {
-                MinimizedDock.releaseSlot(keyword: titleKeyword ?? agentName)
+                MinimizedDock.releaseSlot(keyword: key)
                 isParkedOnDesktop = false
             }
+            notifyDot?.isHidden = true
 
         case .minimized:
             if !isParkedOnDesktop {
@@ -399,18 +405,39 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
                 window.alphaValue = opacity
                 if let savedPos = userParkedPosition {
                     window.setFrameOrigin(savedPos)
-                } else if let dockPos = MinimizedDock.claimSlot(keyword: titleKeyword ?? agentName) {
+                } else if let dockPos = MinimizedDock.claimSlot(keyword: key) {
                     window.setFrameOrigin(dockPos)
                 }
                 window.orderFrontRegardless()
             }
 
+            if tickCount % 10 == 0 {
+                let wasActive = notifyActive
+                notifyActive = NotifySignal.isActive(keyword: key)
+                if notifyActive && !wasActive {
+                    NSSound(named: "Glass")?.play()
+                }
+            }
+
+            if notifyActive {
+                notifyDot?.isHidden = false
+                let pulse = 0.6 + 0.4 * sin(Double(tickCount) * 0.3)
+                notifyDot?.layer?.opacity = Float(pulse)
+            } else {
+                notifyDot?.isHidden = true
+            }
+
         case .visible(let targetFrame):
             if isParkedOnDesktop {
-                MinimizedDock.releaseSlot(keyword: titleKeyword ?? agentName)
+                MinimizedDock.releaseSlot(keyword: key)
                 isParkedOnDesktop = false
                 window.level = .normal
             }
+            if notifyActive {
+                NotifySignal.clear(keyword: key)
+                notifyActive = false
+            }
+            notifyDot?.isHidden = true
 
             window.alphaValue = opacity
 
@@ -438,7 +465,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
                 origin = NSPoint(
                     x: targetFrame.origin.x + margin,
                     y: nsTargetY + margin)
-            default: // "br", "bottom-right"
+            default:
                 origin = NSPoint(
                     x: targetFrame.origin.x + targetFrame.width - wSize.width - margin,
                     y: nsTargetY + margin)
@@ -451,8 +478,11 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Called by DraggableView when user clicks the parked avatar.
     func unminimizeTerminal() {
+        let key = titleKeyword ?? agentName
+        NotifySignal.clear(keyword: key)
+        notifyDot?.isHidden = true
+        notifyActive = false
         tracker.unminimize()
     }
 
@@ -461,7 +491,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - CLI Argument Parsing
+// MARK: - CLI
 
 struct Config {
     var imagePath: String = ""
@@ -494,12 +524,14 @@ func printUsage() -> Never {
       \(terminals)
 
     INTERACTIONS
-      - Drag the avatar when its terminal is minimized to reposition it.
-      - Click a parked avatar to un-minimize and restore its terminal.
-      - Right-click the avatar to quit.
+      Drag the avatar when its terminal is minimized to reposition it.
+      Click a parked avatar to un-minimize and restore its terminal.
+      Right-click the avatar to quit.
 
-    NOTES
-      Requires Accessibility permission (System Settings > Privacy > Accessibility).
+    NOTIFICATIONS
+      When ~/.termavatar/notify/<keyword> exists, a red dot appears on
+      the parked avatar and a sound plays. Use Claude Code's Notification
+      hook to create these signal files automatically.
 
     """, stderr)
     exit(0)
@@ -534,21 +566,12 @@ func parseArgs() -> Config {
     return cfg
 }
 
-// MARK: - Main
-
 let cfg = parseArgs()
-
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)  // No dock icon
-
+app.setActivationPolicy(.accessory)
 let delegate = OverlayApp(
-    imagePath: cfg.imagePath,
-    agentName: cfg.name,
-    avatarSize: cfg.size,
-    corner: cfg.corner,
-    opacity: cfg.opacity,
-    appTarget: cfg.app,
-    titleKeyword: cfg.title
+    imagePath: cfg.imagePath, agentName: cfg.name, avatarSize: cfg.size,
+    corner: cfg.corner, opacity: cfg.opacity, appTarget: cfg.app, titleKeyword: cfg.title
 )
 app.delegate = delegate
 app.run()

@@ -28,6 +28,7 @@ The avatars behave like a natural part of the terminal window. They float above 
 - **Background watcher** -- a daemon monitors window titles and spawns or removes overlays automatically
 - **Hot-reload** -- edit the config file and changes take effect within seconds, no restart required
 - **Simple CLI** -- one command to add, remove, list, or manage avatars
+- **Notification dot** -- a red dot appears on the avatar when Claude Code (or any tool) needs your attention, with a system sound alert
 - **Low CPU usage** -- overlay updates at 10 fps, lightweight enough to run all day
 
 ## Requirements
@@ -393,6 +394,44 @@ When you run `termavatar add`, the CLI also invokes a Python script (`crop_avata
 **"Error: file not found" when adding an avatar**
 
 - Make sure the image path is correct. Use an absolute path or a path relative to your current directory.
+
+## Claude Code Notification Integration
+
+termavatar can show a red notification dot on an avatar when Claude Code needs your input. This is especially useful when terminals are minimized -- you can see at a glance which agent is waiting for you.
+
+### How it works
+
+1. Claude Code fires a `Notification` hook when it needs user input (e.g., a yes/no prompt, a permission request).
+2. The hook runs `notify-avatar.sh`, which determines the focused terminal window title.
+3. The script matches the title against your configured keywords and creates a signal file at `~/.termavatar/notify/<keyword>`.
+4. The overlay detects the signal file and shows a pulsing red dot on the avatar, plus plays a system sound.
+5. When you click the avatar (or bring the terminal back), the notification clears automatically.
+
+### Setup
+
+Add the following to your Claude Code settings file (`~/.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/termavatar/notify-avatar.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Replace `/path/to/termavatar/` with the actual path where you cloned the repository (or `/usr/local/bin/` if you ran `make install`).
+
+The `notify-avatar.sh` script is included in the repository. It supports Ghostty, iTerm2, Kitty, WezTerm, Alacritty, and Terminal.app.
 
 ## Contributing
 
