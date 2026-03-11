@@ -20,6 +20,8 @@ find_bin() {
     local name="$1"
     if [ -x "$SCRIPTDIR/$name" ]; then
         echo "$SCRIPTDIR/$name"
+    elif [ -x "$SCRIPTDIR/build/$name" ]; then
+        echo "$SCRIPTDIR/build/$name"
     elif command -v "$name" >/dev/null 2>&1; then
         command -v "$name"
     else
