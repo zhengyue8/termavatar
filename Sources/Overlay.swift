@@ -270,6 +270,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
 
     private var notifyDot: NSView?
     private var notifyActive = false
+    private var notifyVisibleSince: Int = 0
     private var tickCount: Int = 0
 
     init(imagePath: String, agentName: String, avatarSize: CGFloat,
@@ -418,7 +419,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
                 window.orderFrontRegardless()
             }
 
-            if tickCount % 10 == 0 {
+            if tickCount % 5 == 0 {
                 let wasActive = notifyActive
                 notifyActive = NotifySignal.isActive(keyword: key)
                 if notifyActive && !wasActive {
@@ -440,12 +441,19 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
                 isParkedOnDesktop = false
                 window.level = .normal
             }
-            // Check for notification signal every ~1s even when visible
-            if tickCount % 10 == 0 {
+            // Check for notification signal every ~0.5s even when visible
+            if tickCount % 5 == 0 {
                 let wasActive = notifyActive
                 notifyActive = NotifySignal.isActive(keyword: key)
                 if notifyActive && !wasActive {
                     NSSound(named: "Glass")?.play()
+                    notifyVisibleSince = tickCount
+                }
+                // Auto-clear after 5 seconds when terminal is visible
+                // (user is already looking at the terminal)
+                if notifyActive, tickCount - notifyVisibleSince > 50 {
+                    NotifySignal.clear(keyword: key)
+                    notifyActive = false
                 }
             }
 
