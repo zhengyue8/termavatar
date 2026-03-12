@@ -109,7 +109,7 @@ final class WindowTracker {
 
     private(set) var lastFrame: CGRect = .zero
     private(set) var targetCGWindowID: CGWindowID = kCGNullWindowID
-    private(set) var matchedAXWindow: AXUIElement?
+    var matchedAXWindow: AXUIElement?
     private(set) var matchedAppPID: pid_t = 0
 
     init(appName: String, titleKeyword: String?) {
@@ -149,7 +149,9 @@ final class WindowTracker {
                 var sizeRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
                 AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
-                guard let pv = posRef, let sv = sizeRef else { continue }
+                guard let pv = posRef, let sv = sizeRef,
+                      CFGetTypeID(pv) == AXValueGetTypeID(),
+                      CFGetTypeID(sv) == AXValueGetTypeID() else { continue }
 
                 var pos = CGPoint.zero
                 var size = CGSize.zero
@@ -213,10 +215,13 @@ final class DraggableView: NSView {
     private var didDrag = false
 
     override func mouseDown(with event: NSEvent) {
-        guard overlayApp?.isParkedOnDesktop == true else { return }
-        dragStart = NSEvent.mouseLocation
-        windowStart = window?.frame.origin
-        didDrag = false
+        if overlayApp?.isParkedOnDesktop == true {
+            dragStart = NSEvent.mouseLocation
+            windowStart = window?.frame.origin
+            didDrag = false
+        } else {
+            overlayApp?.clearNotification()
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -337,17 +342,18 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         // Notification dot (red circle, top-right of avatar)
         let dotSize: CGFloat = 12
         let dot = NSView(frame: NSRect(
-            x: padding + avatarSize - dotSize,
-            y: labelHeight + padding + avatarSize - dotSize,
+            x: padding + avatarSize - dotSize + 2,
+            y: labelHeight + padding + avatarSize - dotSize + 2,
             width: dotSize, height: dotSize
         ))
         dot.wantsLayer = true
+        dot.layer?.zPosition = 999
         dot.layer?.cornerRadius = dotSize / 2
-        dot.layer?.backgroundColor = NSColor.systemRed.cgColor
-        dot.layer?.borderWidth = 1.5
+        dot.layer?.backgroundColor = NSColor.red.cgColor
+        dot.layer?.borderWidth = 2
         dot.layer?.borderColor = NSColor.white.cgColor
         dot.isHidden = true
-        content.addSubview(dot)
+        content.addSubview(dot, positioned: .above, relativeTo: nil)
         notifyDot = dot
 
         if !agentName.isEmpty {
@@ -377,7 +383,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
     }
 
     private func startTracking() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 10.0, repeats: true) { [weak self] _ in
+        timer = Timer(timeInterval: 1.0 / 10.0, repeats: true) { [weak self] _ in
             self?.tick()
         }
         RunLoop.current.add(timer!, forMode: .common)
@@ -396,6 +402,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
                 MinimizedDock.releaseSlot(keyword: key)
                 isParkedOnDesktop = false
             }
+            tracker.matchedAXWindow = nil
             notifyDot?.isHidden = true
 
         case .minimized:
@@ -433,11 +440,23 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
                 isParkedOnDesktop = false
                 window.level = .normal
             }
-            if notifyActive {
-                NotifySignal.clear(keyword: key)
-                notifyActive = false
+            // Check for notification signal every ~1s even when visible
+            if tickCount % 10 == 0 {
+                let wasActive = notifyActive
+                notifyActive = NotifySignal.isActive(keyword: key)
+                if notifyActive && !wasActive {
+                    NSSound(named: "Glass")?.play()
+                }
             }
-            notifyDot?.isHidden = true
+
+            if notifyActive {
+                notifyDot?.isHidden = false
+                notifyDot?.layer?.backgroundColor = NSColor.red.cgColor
+                notifyDot?.layer?.borderColor = NSColor.white.cgColor
+                notifyDot?.layer?.opacity = 1.0
+            } else {
+                notifyDot?.isHidden = true
+            }
 
             window.alphaValue = opacity
 
@@ -476,6 +495,13 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
                 window.setFrameOrigin(origin)
             }
         }
+    }
+
+    func clearNotification() {
+        let key = titleKeyword ?? agentName
+        NotifySignal.clear(keyword: key)
+        notifyDot?.isHidden = true
+        notifyActive = false
     }
 
     func unminimizeTerminal() {
