@@ -353,10 +353,14 @@ struct AddAvatarSheet: View {
 
 // MARK: - Menu Bar Entry Point
 
+// Strong reference to prevent ARC from deallocating the delegate
+// (NSApplication.delegate is weak).
+private var _menuBarDelegate: MenuBarDelegate?
+
 func runMenuBarMode() {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
-    let delegate = MenuBarDelegate()
-    app.delegate = delegate
+    _menuBarDelegate = MenuBarDelegate()
+    app.delegate = _menuBarDelegate
     app.run()
 }

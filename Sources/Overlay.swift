@@ -19,12 +19,6 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-// MARK: - Supported Terminals
-
-let supportedTerminals = [
-    "Ghostty", "iTerm2", "kitty", "WezTerm", "Alacritty", "Terminal"
-]
-
 // MARK: - Window State
 
 enum WindowState {
@@ -166,8 +160,8 @@ final class WindowTracker {
 
                 var pos = CGPoint.zero
                 var size = CGSize.zero
-                AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
-                AXValueGetValue(sv as! AXValue, .cgSize, &size)
+                AXValueGetValue(pv as! AXValue, .cgPoint, &pos)  // safe: CFGetTypeID checked above
+                AXValueGetValue(sv as! AXValue, .cgSize, &size)  // safe: CFGetTypeID checked above
 
                 guard size.width > 100, size.height > 100 else { continue }
 
@@ -534,6 +528,13 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         tracker.unminimize()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        timer = nil
+        let key = titleKeyword ?? agentName
+        MinimizedDock.releaseSlot(keyword: key)
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -575,11 +576,14 @@ func runOverlayMode(args: [String]) {
 
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
-    let delegate = OverlayApp(
+    _overlayDelegate = OverlayApp(
         imagePath: imagePath, agentName: name, avatarSize: size,
         corner: corner, opacity: opacity, appTarget: appTarget,
         titleKeyword: title, targetPID: pid
     )
-    app.delegate = delegate
+    app.delegate = _overlayDelegate
     app.run()
 }
+
+// Strong reference to prevent ARC from deallocating the delegate.
+private var _overlayDelegate: OverlayApp?

@@ -69,7 +69,7 @@ struct AvatarConfig: Codable {
         if FileManager.default.fileExists(atPath: configFile) {
             if let handle = FileHandle(forWritingAtPath: configFile) {
                 handle.seekToEndOfFile()
-                handle.write(line.data(using: .utf8)!)
+                if let data = line.data(using: .utf8) { handle.write(data) }
                 handle.closeFile()
             }
         } else {

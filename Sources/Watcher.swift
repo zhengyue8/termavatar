@@ -199,26 +199,19 @@ final class AvatarWatcher {
 
 // MARK: - Standalone Watcher Entry Point
 
+// Global reference so signal handlers can stop the watcher cleanly.
+private var _standaloneWatcher: AvatarWatcher?
+
 /// Runs the watcher as a standalone daemon (used by the CLI `termavatar watch`).
 func runWatcherMode() {
     let watcher = AvatarWatcher()
-
-    // Resolve overlay binary: look for termavatar-overlay next to self
-    let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardized
-    let overlayPath = execURL.deletingLastPathComponent()
-        .appendingPathComponent("termavatar-overlay").path
-
-    if FileManager.default.isExecutableFile(atPath: overlayPath) {
-        watcher.overlayBinaryPath = overlayPath
-        watcher.overlayUseSelfBinary = false
-    }
-    // else: will use self binary with --overlay
+    _standaloneWatcher = watcher
 
     watcherLog("termavatar watcher starting")
     watcher.start()
 
-    // Keep the RunLoop alive
-    signal(SIGINT)  { _ in exit(0) }
-    signal(SIGTERM) { _ in exit(0) }
+    // Graceful shutdown: stop child overlays before exiting.
+    signal(SIGINT)  { _ in _standaloneWatcher?.stop(); exit(0) }
+    signal(SIGTERM) { _ in _standaloneWatcher?.stop(); exit(0) }
     RunLoop.current.run()
 }

@@ -138,7 +138,11 @@ cmd_list() {
     echo ""
     echo "=== Running Overlays ==="
     local pids
-    pids="$(pgrep -f "$OVERLAY" 2>/dev/null || true)"
+    # Only match termavatar processes, not agent-avatar or other tools
+    pids="$(pgrep -f "termavatar.*--overlay" 2>/dev/null || true)"
+    if [ -z "$pids" ]; then
+        pids="$(pgrep -x "$OVERLAY" 2>/dev/null || true)"
+    fi
     if [ -n "$pids" ]; then
         while read -r p; do
             echo "  PID $p"
@@ -149,8 +153,13 @@ cmd_list() {
 
     echo ""
     echo "=== Watcher ==="
-    if pgrep -f "$WATCHER" >/dev/null 2>&1; then
-        echo "  Running (PID $(pgrep -f "$WATCHER"))"
+    local wpid
+    wpid="$(pgrep -f "termavatar.*--watch" 2>/dev/null || true)"
+    if [ -z "$wpid" ]; then
+        wpid="$(pgrep -x "$WATCHER" 2>/dev/null || true)"
+    fi
+    if [ -n "$wpid" ]; then
+        echo "  Running (PID $wpid)"
     else
         echo "  Not running"
     fi
@@ -159,8 +168,11 @@ cmd_list() {
 cmd_watch() {
     ensure_dirs
 
-    if pgrep -f "$WATCHER" >/dev/null 2>&1; then
-        echo "Watcher is already running (PID $(pgrep -f "$WATCHER"))"
+    # Check for termavatar watcher only (not agent-avatar)
+    local existing
+    existing="$(pgrep -f "termavatar.*--watch" 2>/dev/null || pgrep -x "$WATCHER" 2>/dev/null || true)"
+    if [ -n "$existing" ]; then
+        echo "Watcher is already running (PID $existing)"
         return
     fi
 
@@ -191,23 +203,26 @@ cmd_watch() {
 cmd_unwatch() {
     local killed=0
 
+    # Only kill termavatar processes — never touch agent-avatar or other tools.
+    # Match by exact binary name or by termavatar-specific command patterns.
     local pids
-    pids="$(pgrep -f "$OVERLAY" 2>/dev/null || true)"
+
+    # Kill overlay processes (wrapper script or unified binary with --overlay)
+    pids="$(pgrep -f "termavatar.*--overlay" 2>/dev/null || true)"
+    if [ -z "$pids" ]; then
+        pids="$(pgrep -x "$OVERLAY" 2>/dev/null || true)"
+    fi
     if [ -n "$pids" ]; then
         while read -r p; do
             kill "$p" 2>/dev/null && killed=$((killed + 1))
         done <<< "$pids"
     fi
 
-    pids="$(pgrep -f "$WATCHER" 2>/dev/null || true)"
-    if [ -n "$pids" ]; then
-        while read -r p; do
-            kill "$p" 2>/dev/null && killed=$((killed + 1))
-        done <<< "$pids"
+    # Kill watcher (wrapper script or unified binary with --watch)
+    pids="$(pgrep -f "termavatar.*--watch" 2>/dev/null || true)"
+    if [ -z "$pids" ]; then
+        pids="$(pgrep -x "$WATCHER" 2>/dev/null || true)"
     fi
-
-    # Also kill unified binary running in watch mode
-    pids="$(pgrep -f "termavatar --watch" 2>/dev/null || true)"
     if [ -n "$pids" ]; then
         while read -r p; do
             kill "$p" 2>/dev/null && killed=$((killed + 1))
