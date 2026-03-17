@@ -5,6 +5,28 @@ import AppKit
 import SwiftUI
 import ServiceManagement
 
+// MARK: - Design Tokens
+
+private enum Design {
+    // Spacing
+    static let popoverWidth: CGFloat = 320
+    static let popoverHeight: CGFloat = 440
+    static let sheetWidth: CGFloat = 340
+
+    // Avatar
+    static let avatarSize: CGFloat = 44
+    static let avatarSizeLarge: CGFloat = 72
+
+    // Corner radius
+    static let cardRadius: CGFloat = 10
+
+    // Colors
+    static let activeGreen = Color(nsColor: NSColor(red: 0.30, green: 0.78, blue: 0.47, alpha: 1.0))
+    static let hoverBg = Color.primary.opacity(0.06)
+    static let subtleBorder = Color.primary.opacity(0.08)
+    static let dangerRed = Color(nsColor: NSColor(red: 0.92, green: 0.34, blue: 0.34, alpha: 1.0))
+}
+
 // MARK: - Menu Bar App Delegate
 
 final class MenuBarDelegate: NSObject, NSApplicationDelegate {
@@ -24,7 +46,7 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         }
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 300, height: 420)
+        popover.contentSize = NSSize(width: Design.popoverWidth, height: Design.popoverHeight)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(
             rootView: MenuBarView(watcher: watcher)
@@ -54,54 +76,36 @@ struct MenuBarView: View {
     let watcher: AvatarWatcher
     @State private var configs: [String: AvatarConfig] = [:]
     @State private var showingAddSheet = false
-    @State private var editingKeyword: String? = nil
+    @State private var editTarget: EditTarget? = nil
     @State private var startAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
+    @State private var confirmDeleteKeyword: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack(spacing: 8) {
-                Text("Termavatar")
-                    .font(.system(size: 15, weight: .semibold))
-                Spacer()
-                Button(action: { showingAddSheet = true }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .medium))
-                        .frame(width: 24, height: 24)
-                        .background(Color.accentColor.opacity(0.15))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
+            header
+            Divider().opacity(0.5).padding(.horizontal, 16)
 
-            // Avatar list
             if configs.isEmpty {
                 emptyState
             } else {
                 avatarList
             }
 
-            Divider()
-                .padding(.horizontal, 12)
-
-            // Footer
+            Divider().opacity(0.5).padding(.horizontal, 16)
             footer
         }
-        .frame(width: 300, height: 420)
+        .frame(width: Design.popoverWidth, height: Design.popoverHeight)
         .onAppear { reload() }
         .sheet(isPresented: $showingAddSheet) {
             AddAvatarSheet(isPresented: $showingAddSheet, onAdd: { reload() })
         }
-        .sheet(item: $editingKeyword) { keyword in
-            if let config = configs[keyword] {
+        .sheet(item: $editTarget) { target in
+            if let config = configs[target.id] {
                 EditAvatarSheet(
                     config: config,
                     isPresented: Binding(
-                        get: { editingKeyword != nil },
-                        set: { if !$0 { editingKeyword = nil } }
+                        get: { editTarget != nil },
+                        set: { if !$0 { editTarget = nil } }
                     ),
                     onSave: { reload() }
                 )
@@ -109,74 +113,137 @@ struct MenuBarView: View {
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 10) {
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Termavatar")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                Text("\(configs.count) avatar\(configs.count == 1 ? "" : "s")")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
-            Image(systemName: "person.crop.circle.badge.plus")
-                .font(.system(size: 36))
-                .foregroundStyle(.tertiary)
-            Text("No avatars")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
-            Text("Add an avatar to get started")
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
+            Button(action: { showingAddSheet = true }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 26)
+                    .background(Color.accentColor)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Add avatar")
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Spacer()
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.08))
+                    .frame(width: 72, height: 72)
+                Image(systemName: "person.crop.circle.badge.plus")
+                    .font(.system(size: 32))
+                    .foregroundStyle(Color.accentColor.opacity(0.6))
+            }
+            VStack(spacing: 4) {
+                Text("No avatars yet")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("Add your first avatar to get started")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Button("Add Avatar") { showingAddSheet = true }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             Spacer()
         }
         .frame(maxWidth: .infinity)
     }
 
+    // MARK: - Avatar List
+
     private var avatarList: some View {
         ScrollView {
-            LazyVStack(spacing: 2) {
+            LazyVStack(spacing: 0) {
                 ForEach(configs.keys.sorted(), id: \.self) { keyword in
                     if let config = configs[keyword] {
                         AvatarRow(
                             config: config,
-                            onEdit: { editingKeyword = keyword },
+                            isConfirmingDelete: confirmDeleteKeyword == keyword,
+                            onEdit: { editTarget = EditTarget(keyword) },
                             onRemove: {
-                                AvatarConfig.remove(keyword: keyword)
-                                reload()
-                            }
+                                if confirmDeleteKeyword == keyword {
+                                    AvatarConfig.remove(keyword: keyword)
+                                    confirmDeleteKeyword = nil
+                                    reload()
+                                } else {
+                                    confirmDeleteKeyword = keyword
+                                }
+                            },
+                            onCancelDelete: { confirmDeleteKeyword = nil }
                         )
                     }
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
         }
     }
 
-    private var footer: some View {
-        VStack(spacing: 8) {
-            Toggle("Start at Login", isOn: $startAtLogin)
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .font(.system(size: 12))
-                .onChange(of: startAtLogin) { _, newValue in
-                    if newValue {
-                        try? SMAppService.mainApp.register()
-                    } else {
-                        try? SMAppService.mainApp.unregister()
-                    }
-                    startAtLogin = (SMAppService.mainApp.status == .enabled)
-                }
+    // MARK: - Footer
 
-            HStack {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 6, height: 6)
-                Text("\(configs.count) avatar\(configs.count == 1 ? "" : "s") active")
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Toggle(isOn: $startAtLogin) {
+                Label("Login", systemImage: "arrow.right.circle")
                     .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
-                    .font(.system(size: 11))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .onChange(of: startAtLogin) { _, newValue in
+                if newValue {
+                    try? SMAppService.mainApp.register()
+                } else {
+                    try? SMAppService.mainApp.unregister()
+                }
+                startAtLogin = (SMAppService.mainApp.status == .enabled)
+            }
+
+            Spacer()
+
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(Design.activeGreen)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: Design.activeGreen.opacity(0.5), radius: 3)
+                Text("Active")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Button(action: { NSApp.terminate(nil) }) {
+                Image(systemName: "power")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(Color.primary.opacity(0.05))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Quit Termavatar")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
     }
 
     private func reload() {
@@ -185,68 +252,112 @@ struct MenuBarView: View {
     }
 }
 
-// Make String work with .sheet(item:)
-extension String: @retroactive Identifiable {
-    public var id: String { self }
+// Wrapper for .sheet(item:) binding — avoids fragile String: Identifiable conformance.
+private struct EditTarget: Identifiable {
+    let id: String
+    init(_ keyword: String) { self.id = keyword }
 }
 
 // MARK: - Avatar Row
 
 struct AvatarRow: View {
     let config: AvatarConfig
+    let isConfirmingDelete: Bool
     let onEdit: () -> Void
     let onRemove: () -> Void
+    let onCancelDelete: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Thumbnail
-            avatarImage
-                .frame(width: 40, height: 40)
-                .clipShape(Circle())
-                .shadow(color: .black.opacity(0.1), radius: 2, y: 1)
+        HStack(spacing: 14) {
+            // Avatar image with status ring
+            ZStack {
+                Circle()
+                    .fill(Design.activeGreen.opacity(0.2))
+                    .frame(width: Design.avatarSize + 4, height: Design.avatarSize + 4)
+                avatarImage
+                    .frame(width: Design.avatarSize, height: Design.avatarSize)
+                    .clipShape(Circle())
+            }
 
             // Name and keyword
             VStack(alignment: .leading, spacing: 2) {
                 Text(config.name)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                 if config.keyword != config.name {
-                    Text(config.keyword)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Image(systemName: "tag")
+                            .font(.system(size: 8))
+                        Text(config.keyword)
+                            .font(.system(size: 11))
+                    }
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
             }
 
             Spacer()
 
-            // Actions (visible on hover)
-            if hovering {
-                HStack(spacing: 8) {
-                    Button(action: onEdit) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 11))
+            // Actions
+            if isConfirmingDelete {
+                // Delete confirmation inline
+                HStack(spacing: 6) {
+                    Button(action: onCancelDelete) {
+                        Text("No")
+                            .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.secondary)
+                            .frame(width: 32, height: 22)
+                            .background(Color.primary.opacity(0.06))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
                     .buttonStyle(.plain)
 
                     Button(action: onRemove) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary)
+                        Text("Delete")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 48, height: 22)
+                            .background(Design.dangerRed)
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
                     .buttonStyle(.plain)
+                }
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.8).combined(with: .opacity),
+                    removal: .opacity
+                ))
+            } else if hovering {
+                HStack(spacing: 4) {
+                    iconButton(icon: "pencil", action: onEdit)
+                    iconButton(icon: "trash", action: onRemove, tint: Design.dangerRed.opacity(0.8))
                 }
                 .transition(.opacity)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(hovering ? Color.primary.opacity(0.04) : Color.clear)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(hovering ? Design.hoverBg : Color.clear)
+                .padding(.horizontal, 8)
+        )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeInOut(duration: 0.15), value: hovering)
+        .animation(.easeInOut(duration: 0.2), value: isConfirmingDelete)
+    }
+
+    private func iconButton(icon: String, action: @escaping () -> Void, tint: Color = .secondary) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 26, height: 26)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -257,11 +368,16 @@ struct AvatarRow: View {
                 .scaledToFill()
         } else {
             Circle()
-                .fill(Color.gray.opacity(0.2))
+                .fill(
+                    LinearGradient(
+                        colors: [Color.accentColor.opacity(0.3), Color.accentColor.opacity(0.15)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
                 .overlay(
                     Text(String(config.name.prefix(1)).uppercased())
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.accentColor)
                 )
         }
     }
@@ -278,92 +394,126 @@ struct AddAvatarSheet: View {
     @State private var selectedImagePath: String?
     @State private var selectedImage: NSImage?
     @State private var errorMessage: String?
+    @State private var previousName = ""
 
     var body: some View {
-        VStack(spacing: 20) {
-            Text("New Avatar")
-                .font(.system(size: 15, weight: .semibold))
-
-            // Photo
-            photoSection
-
-            // Name
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Name")
-                    .font(.system(size: 12, weight: .medium))
+        VStack(spacing: 0) {
+            // Sheet header
+            VStack(spacing: 4) {
+                Image(systemName: "person.crop.circle.badge.plus")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.accentColor)
+                Text("New Avatar")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                Text("Add a floating avatar to your terminal")
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                TextField("e.g. Jack", text: $name)
-                    .textFieldStyle(.roundedBorder)
+            }
+            .padding(.top, 24)
+            .padding(.bottom, 20)
+
+            // Photo picker
+            photoSection
+                .padding(.bottom, 20)
+
+            // Form fields
+            VStack(spacing: 14) {
+                FormField(label: "Name", placeholder: "e.g. Jack", text: $name)
                     .onChange(of: name) { _, newValue in
                         if keyword.isEmpty || keyword == previousName {
                             keyword = newValue
                         }
                         previousName = newValue
                     }
-            }
 
-            // Keyword
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Window Title Keyword")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                TextField("Text to match in terminal title", text: $keyword)
-                    .textFieldStyle(.roundedBorder)
-                Text("The avatar appears when a terminal title contains this text")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                FormField(
+                    label: "Window Title Keyword",
+                    placeholder: "Text to match in terminal title",
+                    text: $keyword,
+                    hint: "The avatar appears when a terminal title contains this text"
+                )
             }
+            .padding(.horizontal, 24)
 
             if let error = errorMessage {
-                Text(error)
-                    .foregroundColor(.red)
-                    .font(.system(size: 11))
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                    Text(error)
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(Design.dangerRed)
+                .padding(.top, 10)
             }
+
+            Spacer().frame(height: 20)
 
             // Actions
-            HStack {
+            HStack(spacing: 10) {
                 Button("Cancel") { isPresented = false }
                     .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Add Avatar") { addAvatar() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(name.isEmpty || keyword.isEmpty || selectedImagePath == nil)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                Button(action: addAvatar) {
+                    Text("Add Avatar")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background(
+                            (name.isEmpty || keyword.isEmpty || selectedImagePath == nil)
+                                ? Color.accentColor.opacity(0.4)
+                                : Color.accentColor
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.plain)
+                .disabled(name.isEmpty || keyword.isEmpty || selectedImagePath == nil)
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
         }
-        .padding(24)
-        .frame(width: 320)
+        .frame(width: Design.sheetWidth)
     }
 
-    @State private var previousName = ""
-
     private var photoSection: some View {
-        HStack(spacing: 16) {
-            if let image = selectedImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 64, height: 64)
-                    .clipShape(Circle())
-                    .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
-            } else {
-                Circle()
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                    .foregroundStyle(.quaternary)
-                    .frame(width: 64, height: 64)
-                    .overlay(
-                        Image(systemName: "camera.fill")
-                            .font(.system(size: 20))
-                            .foregroundStyle(.tertiary)
-                    )
+        VStack(spacing: 10) {
+            ZStack {
+                if let image = selectedImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: Design.avatarSizeLarge, height: Design.avatarSizeLarge)
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+                } else {
+                    Circle()
+                        .fill(Color.primary.opacity(0.04))
+                        .frame(width: Design.avatarSizeLarge, height: Design.avatarSizeLarge)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                                .foregroundStyle(Color.primary.opacity(0.15))
+                        )
+                        .overlay(
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 22))
+                                .foregroundStyle(.tertiary)
+                        )
+                }
             }
+            .onTapGesture { pickImage() }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Button("Choose Photo...") { pickImage() }
-                    .controlSize(.small)
-                Text("Square photos work best")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
+            Button("Choose Photo") { pickImage() }
+                .font(.system(size: 12, weight: .medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
         }
     }
 
@@ -412,64 +562,93 @@ struct EditAvatarSheet: View {
     @State private var selectedImage: NSImage?
 
     var body: some View {
-        VStack(spacing: 20) {
-            Text("Edit Avatar")
-                .font(.system(size: 15, weight: .semibold))
+        VStack(spacing: 0) {
+            // Sheet header with current photo
+            VStack(spacing: 12) {
+                ZStack {
+                    currentPhoto
+                        .frame(width: Design.avatarSizeLarge, height: Design.avatarSizeLarge)
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
 
-            // Current photo
-            HStack(spacing: 16) {
-                if let image = selectedImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 64, height: 64)
-                        .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
-                } else if let nsImage = NSImage(contentsOfFile: config.imagePath) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 64, height: 64)
-                        .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                    // Camera overlay button
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .frame(width: 26, height: 26)
+                        .overlay(
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        )
+                        .offset(x: 24, y: 24)
+                        .onTapGesture { pickImage() }
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Button("Change Photo...") { pickImage() }
-                        .controlSize(.small)
-                }
+                Text("Edit Avatar")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
             }
+            .padding(.top, 24)
+            .padding(.bottom, 20)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Name")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                TextField("Display name", text: $name)
-                    .textFieldStyle(.roundedBorder)
+            // Form fields
+            VStack(spacing: 14) {
+                FormField(label: "Name", placeholder: "Display name", text: $name)
+                FormField(label: "Window Title Keyword", placeholder: "Text to match", text: $keyword)
             }
+            .padding(.horizontal, 24)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Window Title Keyword")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                TextField("Keyword", text: $keyword)
-                    .textFieldStyle(.roundedBorder)
-            }
+            Spacer().frame(height: 20)
 
-            HStack {
+            // Actions
+            HStack(spacing: 10) {
                 Button("Cancel") { isPresented = false }
                     .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Save") { save() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(name.isEmpty || keyword.isEmpty)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                Button(action: save) {
+                    Text("Save")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background(
+                            (name.isEmpty || keyword.isEmpty)
+                                ? Color.accentColor.opacity(0.4)
+                                : Color.accentColor
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.plain)
+                .disabled(name.isEmpty || keyword.isEmpty)
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
         }
-        .padding(24)
-        .frame(width: 320)
+        .frame(width: Design.sheetWidth)
         .onAppear {
             name = config.name
             keyword = config.keyword
+        }
+    }
+
+    @ViewBuilder
+    private var currentPhoto: some View {
+        if let image = selectedImage {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+        } else if let nsImage = NSImage(contentsOfFile: config.imagePath) {
+            Image(nsImage: nsImage)
+                .resizable()
+                .scaledToFill()
+        } else {
+            Circle().fill(Color.gray.opacity(0.2))
         }
     }
 
@@ -487,20 +666,20 @@ struct EditAvatarSheet: View {
     }
 
     private func save() {
-        // Remove old entry
         AvatarConfig.remove(keyword: config.keyword)
 
-        // Process new image if changed
         var imagePath = config.imagePath
         if let newPath = selectedImagePath {
             if let cropped = AvatarConfig.cropCircle(sourcePath: newPath, name: name) {
                 imagePath = cropped
             }
         } else if name != config.name {
-            // Rename image file if name changed
             let newPath = (AvatarConfig.avatarsDir as NSString).appendingPathComponent("\(name).png")
-            try? FileManager.default.moveItem(atPath: config.imagePath, toPath: newPath)
-            imagePath = newPath
+            let fm = FileManager.default
+            try? fm.removeItem(atPath: newPath)
+            if (try? fm.moveItem(atPath: config.imagePath, toPath: newPath)) != nil {
+                imagePath = newPath
+            }
         }
 
         let updated = AvatarConfig(
@@ -509,7 +688,6 @@ struct EditAvatarSheet: View {
         )
         AvatarConfig.add(updated)
 
-        // Sync rename to live agent-avatar config
         AvatarConfig.syncRenameToLiveConfig(
             oldKeyword: config.keyword,
             newKeyword: keyword,
@@ -518,6 +696,43 @@ struct EditAvatarSheet: View {
 
         onSave()
         isPresented = false
+    }
+}
+
+// MARK: - Reusable Form Field
+
+struct FormField: View {
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    var hint: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .tracking(0.3)
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(Design.subtleBorder, lineWidth: 1)
+                )
+            if let hint = hint {
+                Text(hint)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 }
 
