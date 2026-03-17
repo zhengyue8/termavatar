@@ -87,7 +87,7 @@ cmd_add() {
     # Remove existing entry for this name, then append
     if [ -f "$CONFFILE" ]; then
         local tmp
-        tmp="$(grep -v "^${name}|" "$CONFFILE" 2>/dev/null || true)"
+        tmp="$(grep -Fv "${name}|" "$CONFFILE" 2>/dev/null || true)"
         echo "$tmp" > "$CONFFILE"
     fi
     echo "${name}|${name}|${outfile}|${corner}|${size}" >> "$CONFFILE"
@@ -107,13 +107,13 @@ cmd_remove() {
 
     ensure_dirs
 
-    if ! grep -q "^${name}|" "$CONFFILE" 2>/dev/null; then
+    if ! grep -Fq "${name}|" "$CONFFILE" 2>/dev/null; then
         echo "Error: avatar '$name' not found in config" >&2
         exit 1
     fi
 
     local tmp
-    tmp="$(grep -v "^${name}|" "$CONFFILE")"
+    tmp="$(grep -Fv "${name}|" "$CONFFILE")"
     echo "$tmp" > "$CONFFILE"
     sed -i '' '/^$/d' "$CONFFILE" 2>/dev/null || true
 

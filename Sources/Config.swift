@@ -90,6 +90,29 @@ struct AvatarConfig: Codable {
         try? lines.joined(separator: "\n").write(toFile: configFile, atomically: true, encoding: .utf8)
     }
 
+    // MARK: - Live Config Sync
+
+    /// Path to the live agent-avatar config (if present).
+    static let liveConfigDir = (NSHomeDirectory() as NSString).appendingPathComponent("agent-avatar")
+    static let liveConfigFile = (liveConfigDir as NSString).appendingPathComponent("agents.conf")
+
+    /// Sync a rename to the live ~/agent-avatar/agents.conf so the running watcher picks it up.
+    static func syncRenameToLiveConfig(oldKeyword: String, newKeyword: String, newName: String) {
+        guard FileManager.default.fileExists(atPath: liveConfigFile),
+              let content = try? String(contentsOfFile: liveConfigFile, encoding: .utf8) else { return }
+
+        let lines = content.components(separatedBy: "\n").map { line -> String in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { return line }
+            let parts = trimmed.split(separator: "|", maxSplits: 4).map(String.init)
+            guard parts.count >= 4, parts[0] == oldKeyword else { return line }
+            // Replace keyword and name, keep image/corner/size
+            let rest = parts[2...].joined(separator: "|")
+            return "\(newKeyword)|\(newName)|\(rest)"
+        }
+        try? lines.joined(separator: "\n").write(toFile: liveConfigFile, atomically: true, encoding: .utf8)
+    }
+
     /// Crops an image to a circle and saves as PNG in the avatars directory.
     /// Returns the saved path.
     static func cropCircle(sourcePath: String, name: String) -> String? {

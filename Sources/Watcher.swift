@@ -8,10 +8,14 @@ import Foundation
 
 // MARK: - Logging
 
+private let _logFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss"
+    return f
+}()
+
 func watcherLog(_ message: String) {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "HH:mm:ss"
-    let ts = formatter.string(from: Date())
+    let ts = _logFormatter.string(from: Date())
     print("[\(ts)] \(message)")
     fflush(stdout)
 }
@@ -125,6 +129,9 @@ final class AvatarWatcher {
             lastConfigReload = Date()
         }
 
+        // Reap zombie child processes
+        while waitpid(-1, nil, WNOHANG) > 0 {}
+
         let activeInstances = Set(discoverWindows(configs: configs))
 
         // Start overlays for new window instances
@@ -210,8 +217,16 @@ func runWatcherMode() {
     watcherLog("termavatar watcher starting")
     watcher.start()
 
-    // Graceful shutdown: stop child overlays before exiting.
-    signal(SIGINT)  { _ in _standaloneWatcher?.stop(); exit(0) }
-    signal(SIGTERM) { _ in _standaloneWatcher?.stop(); exit(0) }
+    // Graceful shutdown using DispatchSource (async-signal-safe).
+    let sigintSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    sigintSrc.setEventHandler { _standaloneWatcher?.stop(); exit(0) }
+    sigintSrc.resume()
+    signal(SIGINT, SIG_IGN)
+
+    let sigtermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    sigtermSrc.setEventHandler { _standaloneWatcher?.stop(); exit(0) }
+    sigtermSrc.resume()
+    signal(SIGTERM, SIG_IGN)
+
     RunLoop.current.run()
 }
