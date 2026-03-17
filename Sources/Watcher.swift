@@ -92,60 +92,54 @@ func loadConfig() -> [String: AvatarConfig] {
 
 // MARK: - Window Discovery
 
-/// Terminal application bundle-name substrings to scan for.
-private let terminalAppNames = [
-    "ghostty",
-    "iterm",
-    "kitty",
-    "wezterm",
-    "alacritty",
-    "terminal",
+/// Terminal application bundle identifiers to scan for.
+private let supportedBundles = [
+    "com.mitchellh.ghostty", "com.googlecode.iterm2",
+    "net.kovidgoyal.kitty", "com.github.wez.wezterm",
+    "org.alacritty", "com.apple.Terminal",
 ]
 
-/// Represents a terminal window found via the Accessibility API.
-struct TerminalWindow {
-    let title: String
-    let appName: String   // localised application name
+/// A unique window instance: keyword + PID of the terminal app that owns it.
+/// This supports multiple terminal processes (e.g. separate Ghostty instances)
+/// each showing windows with the same keyword.
+struct WindowInstance: Hashable {
+    let keyword: String
+    let pid: pid_t
 }
 
-/// Queries the Accessibility API for all visible terminal windows and returns
-/// their titles along with the owning application name.
-func getTerminalWindows() -> [TerminalWindow] {
-    let running = NSWorkspace.shared.runningApplications
-
-    // Filter to known terminal emulators.
-    let terminalApps = running.filter { app in
-        guard let name = app.localizedName?.lowercased() else { return false }
-        return terminalAppNames.contains { name.contains($0) }
+/// Uses `NSRunningApplication.runningApplications(withBundleIdentifier:)` to
+/// find all terminal processes, then queries the Accessibility API for window
+/// titles. This class-method query always returns fresh results (unlike
+/// `NSWorkspace.shared.runningApplications` which requires RunLoop processing).
+func discoverWindows(configs: [String: AvatarConfig]) -> [WindowInstance] {
+    var terminalApps: [NSRunningApplication] = []
+    for bundle in supportedBundles {
+        terminalApps.append(contentsOf:
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundle))
     }
 
-    var results: [TerminalWindow] = []
-
+    var found: [WindowInstance] = []
     for app in terminalApps {
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         var windowsRef: CFTypeRef?
-        let status = AXUIElementCopyAttributeValue(
-            axApp,
-            kAXWindowsAttribute as CFString,
-            &windowsRef
-        )
-        guard status == .success, let windows = windowsRef as? [AXUIElement] else {
-            continue
-        }
+        AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
+        guard let axWindows = windowsRef as? [AXUIElement] else { continue }
 
-        for window in windows {
+        for axWin in axWindows {
             var titleRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
-            if let title = titleRef as? String, !title.isEmpty {
-                results.append(TerminalWindow(
-                    title: title,
-                    appName: app.localizedName ?? "unknown"
-                ))
+            AXUIElementCopyAttributeValue(axWin, kAXTitleAttribute as CFString, &titleRef)
+            let title = titleRef as? String ?? ""
+            if title.isEmpty { continue }
+
+            for (keyword, _) in configs {
+                if title.contains(keyword) {
+                    found.append(WindowInstance(keyword: keyword, pid: app.processIdentifier))
+                    break
+                }
             }
         }
     }
-
-    return results
+    return found
 }
 
 // MARK: - Overlay Process Management
@@ -159,41 +153,48 @@ func resolveOverlayPath() -> String {
     return directory.appendingPathComponent("termavatar-overlay").path
 }
 
-/// Tracks running overlay processes keyed by a unique window identifier
-/// (combination of keyword and window title) so we can stop them when the
-/// matching window disappears.
+/// Tracks running overlay processes keyed by `WindowInstance` (keyword + terminal PID)
+/// so each terminal process gets its own overlay.
 final class OverlayManager {
-    /// Maps a tracking key (keyword) to the PID of its overlay process.
-    private var overlays: [String: pid_t] = [:]
+    /// Maps each window instance to its overlay process PID.
+    private var overlays: [WindowInstance: pid_t] = [:]
     private let overlayPath: String
 
     init(overlayPath: String) {
         self.overlayPath = overlayPath
     }
 
-    /// Returns the set of keywords that currently have a running overlay.
-    var activeKeywords: Set<String> {
+    /// Returns the set of window instances that currently have a running overlay.
+    var activeInstances: Set<WindowInstance> {
         Set(overlays.keys)
     }
 
-    /// Launches an overlay for the given keyword if one is not already running.
-    func start(keyword: String, config: AvatarConfig, appName: String) {
-        // If an overlay is already alive for this keyword, do nothing.
-        if let pid = overlays[keyword], kill(pid, 0) == 0 {
+    /// Launches an overlay for the given instance if one is not already running.
+    func start(instance: WindowInstance, config: AvatarConfig) {
+        // If an overlay is already alive for this instance, do nothing.
+        if let pid = overlays[instance], kill(pid, 0) == 0 {
             return
         }
         // Stale entry — clean up.
-        overlays.removeValue(forKey: keyword)
+        overlays.removeValue(forKey: instance)
+
+        let appName: String
+        if let app = NSRunningApplication(processIdentifier: instance.pid) {
+            appName = app.localizedName ?? "ghostty"
+        } else {
+            appName = "ghostty"
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: overlayPath)
         process.arguments = [
             config.imagePath,
-            "--title", keyword,
+            "--title", instance.keyword,
             "--name", config.name,
             "--size", String(config.size),
             "--corner", config.corner,
             "--app", appName.lowercased(),
+            "--pid", String(instance.pid),
         ]
         // Overlay manages its own window; suppress its stdio.
         process.standardOutput = FileHandle.nullDevice
@@ -201,24 +202,24 @@ final class OverlayManager {
 
         do {
             try process.run()
-            overlays[keyword] = process.processIdentifier
-            log("Started overlay '\(config.name)' for keyword '\(keyword)' (pid \(process.processIdentifier))")
+            overlays[instance] = process.processIdentifier
+            log("Started '\(config.name)' (title: \(instance.keyword), pid: \(instance.pid))")
         } catch {
-            log("Failed to launch overlay for '\(config.name)': \(error.localizedDescription)")
+            log("Failed to start '\(config.name)': \(error.localizedDescription)")
         }
     }
 
-    /// Terminates the overlay associated with the given keyword.
-    func stop(keyword: String) {
-        guard let pid = overlays.removeValue(forKey: keyword) else { return }
+    /// Terminates the overlay associated with the given instance.
+    func stop(instance: WindowInstance) {
+        guard let pid = overlays.removeValue(forKey: instance) else { return }
         kill(pid, SIGTERM)
-        log("Stopped overlay for keyword '\(keyword)' (pid \(pid))")
+        log("Stopped '\(instance.keyword)' (pid: \(instance.pid))")
     }
 
     /// Stops all running overlays (used during shutdown).
     func stopAll() {
-        for keyword in Array(overlays.keys) {
-            stop(keyword: keyword)
+        for instance in Array(overlays.keys) {
+            stop(instance: instance)
         }
     }
 }
@@ -269,28 +270,21 @@ while true {
         lastConfigReload = Date()
     }
 
-    // Discover all terminal windows.
-    let windows = getTerminalWindows()
+    let activeInstances = Set(discoverWindows(configs: configs))
 
-    // Track which keywords matched a visible window this cycle.
-    var matchedKeywords = Set<String>()
-
-    for (keyword, config) in configs {
-        for window in windows {
-            if window.title.contains(keyword) {
-                matchedKeywords.insert(keyword)
-                manager.start(keyword: keyword, config: config, appName: window.appName)
-                break  // one match per keyword is enough
-            }
+    // Start overlays for new window instances.
+    for instance in activeInstances {
+        if let config = configs[instance.keyword] {
+            manager.start(instance: instance, config: config)
         }
     }
 
     // Tear down overlays whose windows have disappeared.
-    for keyword in manager.activeKeywords {
-        if !matchedKeywords.contains(keyword) {
-            manager.stop(keyword: keyword)
+    for instance in manager.activeInstances {
+        if !activeInstances.contains(instance) {
+            manager.stop(instance: instance)
         }
     }
 
-    Thread.sleep(forTimeInterval: pollInterval)
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: pollInterval))
 }

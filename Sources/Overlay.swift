@@ -106,20 +106,31 @@ struct NotifySignal {
 final class WindowTracker {
     let appName: String
     let titleKeyword: String?
+    let targetPID: pid_t?
 
     private(set) var lastFrame: CGRect = .zero
     private(set) var targetCGWindowID: CGWindowID = kCGNullWindowID
     var matchedAXWindow: AXUIElement?
     private(set) var matchedAppPID: pid_t = 0
 
-    init(appName: String, titleKeyword: String?) {
+    init(appName: String, titleKeyword: String?, targetPID: pid_t? = nil) {
         self.appName = appName
         self.titleKeyword = titleKeyword
+        self.targetPID = targetPID
     }
 
     func getWindowState() -> WindowState {
-        let apps = NSWorkspace.shared.runningApplications.filter {
-            $0.localizedName?.localizedCaseInsensitiveContains(appName) == true
+        let apps: [NSRunningApplication]
+        if let pid = targetPID {
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                apps = [app]
+            } else {
+                apps = []
+            }
+        } else {
+            apps = NSWorkspace.shared.runningApplications.filter {
+                $0.localizedName?.localizedCaseInsensitiveContains(appName) == true
+            }
         }
 
         for app in apps {
@@ -259,6 +270,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
     private let opacity: CGFloat
     private let appTarget: String
     private let titleKeyword: String?
+    private let targetPID: pid_t?
     private let margin: CGFloat = 8
 
     private var window: NSWindow!
@@ -274,7 +286,8 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
     private var tickCount: Int = 0
 
     init(imagePath: String, agentName: String, avatarSize: CGFloat,
-         corner: String, opacity: CGFloat, appTarget: String, titleKeyword: String?) {
+         corner: String, opacity: CGFloat, appTarget: String, titleKeyword: String?,
+         targetPID: pid_t? = nil) {
         self.imagePath = imagePath
         self.agentName = agentName
         self.avatarSize = avatarSize
@@ -282,6 +295,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
         self.opacity = opacity
         self.appTarget = appTarget
         self.titleKeyword = titleKeyword
+        self.targetPID = targetPID
         super.init()
     }
 
@@ -291,7 +305,7 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
-        tracker = WindowTracker(appName: appTarget, titleKeyword: titleKeyword)
+        tracker = WindowTracker(appName: appTarget, titleKeyword: titleKeyword, targetPID: targetPID)
         buildWindow(image: image)
         startTracking()
     }
@@ -535,6 +549,7 @@ struct Config {
     var opacity: CGFloat = 0.92
     var app: String = "ghostty"
     var title: String? = nil
+    var pid: pid_t? = nil
 }
 
 func printUsage() -> Never {
@@ -552,6 +567,7 @@ func printUsage() -> Never {
       --opacity <0-1>     Window opacity (default: 0.92)
       --app <name>        Terminal app to attach to (default: ghostty)
       --title <keyword>   Only match windows whose title contains this string
+      --pid <pid>         Only search windows in this specific process
       -h, --help          Show this help
 
     SUPPORTED TERMINALS
@@ -591,6 +607,7 @@ func parseArgs() -> Config {
         case "--opacity" where i + 1 < args.count: cfg.opacity = CGFloat(Double(args[i+1]) ?? 0.92); i += 2
         case "--app"     where i + 1 < args.count: cfg.app     = args[i+1]; i += 2
         case "--title"   where i + 1 < args.count: cfg.title   = args[i+1]; i += 2
+        case "--pid"     where i + 1 < args.count: cfg.pid     = pid_t(args[i+1]); i += 2
         case "--help", "-h": printUsage()
         default:
             fputs("termavatar: unknown option '\(args[i])'\n", stderr)
@@ -605,7 +622,8 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let delegate = OverlayApp(
     imagePath: cfg.imagePath, agentName: cfg.name, avatarSize: cfg.size,
-    corner: cfg.corner, opacity: cfg.opacity, appTarget: cfg.app, titleKeyword: cfg.title
+    corner: cfg.corner, opacity: cfg.opacity, appTarget: cfg.app, titleKeyword: cfg.title,
+    targetPID: cfg.pid
 )
 app.delegate = delegate
 app.run()
