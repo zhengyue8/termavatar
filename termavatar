@@ -22,8 +22,21 @@ find_bin() {
         echo "$SCRIPTDIR/$name"
     elif [ -x "$SCRIPTDIR/build/$name" ]; then
         echo "$SCRIPTDIR/build/$name"
+    elif [ -x "$SCRIPTDIR/build/Termavatar.app/Contents/MacOS/termavatar" ]; then
+        # Unified binary inside app bundle
+        echo "$SCRIPTDIR/build/Termavatar.app/Contents/MacOS/termavatar"
     elif command -v "$name" >/dev/null 2>&1; then
         command -v "$name"
+    else
+        echo ""
+    fi
+}
+
+# Resolve the unified app binary (if present)
+find_app_bin() {
+    local app_bin="$SCRIPTDIR/build/Termavatar.app/Contents/MacOS/termavatar"
+    if [ -x "$app_bin" ]; then
+        echo "$app_bin"
     else
         echo ""
     fi
@@ -124,13 +137,12 @@ cmd_list() {
 
     echo ""
     echo "=== Running Overlays ==="
-    shopt -s nullglob
     local pids
-    pids=($(pgrep -f "$OVERLAY" 2>/dev/null || true))
-    if [ ${#pids[@]} -gt 0 ]; then
-        for p in "${pids[@]}"; do
+    pids="$(pgrep -f "$OVERLAY" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+        while read -r p; do
             echo "  PID $p"
-        done
+        done <<< "$pids"
     else
         echo "  (none)"
     fi
@@ -152,32 +164,55 @@ cmd_watch() {
         return
     fi
 
+    # Try wrapper script first, then unified binary with --watch
     local bin
     bin="$(find_bin "$WATCHER")"
-    if [ -z "$bin" ]; then
-        echo "Error: $WATCHER not found in $SCRIPTDIR or PATH" >&2
-        exit 1
+    if [ -n "$bin" ]; then
+        nohup "$bin" >> "$LOGFILE" 2>&1 &
+        disown
+        echo "Watcher started (PID $!), logging to $LOGFILE"
+        return
     fi
 
-    nohup "$bin" >> "$LOGFILE" 2>&1 &
-    disown
-    echo "Watcher started (PID $!), logging to $LOGFILE"
+    # Fallback: unified app binary
+    local app_bin
+    app_bin="$(find_app_bin)"
+    if [ -n "$app_bin" ]; then
+        nohup "$app_bin" --watch >> "$LOGFILE" 2>&1 &
+        disown
+        echo "Watcher started (PID $!), logging to $LOGFILE"
+        return
+    fi
+
+    echo "Error: $WATCHER not found in $SCRIPTDIR or PATH" >&2
+    exit 1
 }
 
 cmd_unwatch() {
     local killed=0
 
-    shopt -s nullglob
     local pids
-    pids=($(pgrep -f "$OVERLAY" 2>/dev/null || true))
-    for p in "${pids[@]}"; do
-        kill "$p" 2>/dev/null && killed=$((killed + 1))
-    done
+    pids="$(pgrep -f "$OVERLAY" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+        while read -r p; do
+            kill "$p" 2>/dev/null && killed=$((killed + 1))
+        done <<< "$pids"
+    fi
 
-    pids=($(pgrep -f "$WATCHER" 2>/dev/null || true))
-    for p in "${pids[@]}"; do
-        kill "$p" 2>/dev/null && killed=$((killed + 1))
-    done
+    pids="$(pgrep -f "$WATCHER" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+        while read -r p; do
+            kill "$p" 2>/dev/null && killed=$((killed + 1))
+        done <<< "$pids"
+    fi
+
+    # Also kill unified binary running in watch mode
+    pids="$(pgrep -f "termavatar --watch" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+        while read -r p; do
+            kill "$p" 2>/dev/null && killed=$((killed + 1))
+        done <<< "$pids"
+    fi
 
     if [ "$killed" -gt 0 ]; then
         echo "Stopped $killed process(es)"

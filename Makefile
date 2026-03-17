@@ -27,8 +27,22 @@ app:
 	@echo "Built $(APP_DIR)"
 	@echo "Run:  open $(APP_DIR)"
 
-# Alias for backwards compatibility
+# Alias for backwards compatibility — also creates CLI wrapper scripts
 build: app
+	@echo '#!/bin/bash' > $(BUILD_DIR)/termavatar-overlay
+	@echo 'SELF_DIR="$$(cd "$$(dirname "$$0")" && pwd)"' >> $(BUILD_DIR)/termavatar-overlay
+	@echo 'BIN="$$SELF_DIR/Termavatar.app/Contents/MacOS/termavatar"' >> $(BUILD_DIR)/termavatar-overlay
+	@echo 'if [ "$${1:-}" = "--help" ]; then' >> $(BUILD_DIR)/termavatar-overlay
+	@echo '    echo "USAGE: termavatar-overlay <image> [--name N] [--title T] [--app A] [--size S] [--corner C] [--opacity O] [--pid P]"' >> $(BUILD_DIR)/termavatar-overlay
+	@echo '    exit 0' >> $(BUILD_DIR)/termavatar-overlay
+	@echo 'fi' >> $(BUILD_DIR)/termavatar-overlay
+	@echo 'exec "$$BIN" --overlay "$$@"' >> $(BUILD_DIR)/termavatar-overlay
+	chmod +x $(BUILD_DIR)/termavatar-overlay
+	@echo '#!/bin/bash' > $(BUILD_DIR)/termavatar-watcher
+	@echo 'SELF_DIR="$$(cd "$$(dirname "$$0")" && pwd)"' >> $(BUILD_DIR)/termavatar-watcher
+	@echo 'BIN="$$SELF_DIR/Termavatar.app/Contents/MacOS/termavatar"' >> $(BUILD_DIR)/termavatar-watcher
+	@echo '"$$BIN" --watch "$$@"' >> $(BUILD_DIR)/termavatar-watcher
+	chmod +x $(BUILD_DIR)/termavatar-watcher
 
 install: app
 	mkdir -p $(PREFIX)/bin

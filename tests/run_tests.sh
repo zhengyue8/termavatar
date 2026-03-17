@@ -13,6 +13,9 @@ TEST_HOME=$(mktemp -d)
 ORIG_HOME="$HOME"
 
 cleanup() {
+    # Kill any watcher/overlay processes we may have spawned
+    pkill -f "termavatar-watcher" 2>/dev/null || true
+    pkill -f "termavatar-overlay" 2>/dev/null || true
     rm -rf "$TEST_HOME"
     export HOME="$ORIG_HOME"
 }

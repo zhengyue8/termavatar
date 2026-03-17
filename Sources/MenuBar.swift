@@ -56,6 +56,7 @@ struct MenuBarView: View {
     let watcher: AvatarWatcher
     @State private var configs: [String: AvatarConfig] = [:]
     @State private var showingAddSheet = false
+    @State private var startAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -110,20 +111,35 @@ struct MenuBarView: View {
             Divider()
 
             // Footer
-            HStack {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 8, height: 8)
-                Text("Watching \(configs.count) avatar\(configs.count == 1 ? "" : "s")")
+            VStack(spacing: 6) {
+                Toggle("Start at Login", isOn: $startAtLogin)
+                    .toggleStyle(.switch)
                     .font(.caption)
+                    .onChange(of: startAtLogin) { _, newValue in
+                        if newValue {
+                            try? SMAppService.mainApp.register()
+                        } else {
+                            try? SMAppService.mainApp.unregister()
+                        }
+                        // Sync state back in case register/unregister failed
+                        startAtLogin = (SMAppService.mainApp.status == .enabled)
+                    }
+
+                HStack {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 8, height: 8)
+                    Text("Watching \(configs.count) avatar\(configs.count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Quit") {
+                        NSApp.terminate(nil)
+                    }
+                    .font(.caption)
+                    .buttonStyle(.plain)
                     .foregroundColor(.secondary)
-                Spacer()
-                Button("Quit") {
-                    NSApp.terminate(nil)
                 }
-                .font(.caption)
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
