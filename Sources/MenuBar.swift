@@ -5,20 +5,25 @@ import AppKit
 import SwiftUI
 import ServiceManagement
 
-// MARK: - Design Tokens
+// MARK: - Design System
 
 private enum DS {
-    static let popW: CGFloat = 360
-    static let popH: CGFloat = 460
+    static let popW: CGFloat = 368
+    static let popH: CGFloat = 480
     static let sheetW: CGFloat = 340
-    static let avatarGrid: CGFloat = 60
-    static let avatarLarge: CGFloat = 72
-    static let cardRadius: CGFloat = 12
-    static let green = Color(nsColor: NSColor(red: 0.30, green: 0.78, blue: 0.47, alpha: 1.0))
-    static let red = Color(nsColor: NSColor(red: 0.92, green: 0.34, blue: 0.34, alpha: 1.0))
-    static let cardBg = Color.primary.opacity(0.04)
-    static let cardHover = Color.primary.opacity(0.08)
+    static let gridAvatar: CGFloat = 68
+    static let sheetAvatar: CGFloat = 76
+    static let cardRadius: CGFloat = 14
+    static let btnRadius: CGFloat = 10
+
+    // Semantic colors
+    static let green = Color(nsColor: NSColor(red: 0.28, green: 0.75, blue: 0.45, alpha: 1.0))
+    static let red = Color(nsColor: NSColor(red: 0.90, green: 0.32, blue: 0.32, alpha: 1.0))
+    static let accent = Color.accentColor
+    static let cardBg = Color.primary.opacity(0.035)
+    static let cardHover = Color.primary.opacity(0.07)
     static let border = Color.primary.opacity(0.06)
+    static let borderHover = Color.accentColor.opacity(0.35)
 }
 
 // MARK: - Menu Bar App Delegate
@@ -74,6 +79,7 @@ private struct EditTarget: Identifiable {
 struct MenuBarView: View {
     let watcher: AvatarWatcher
     @State private var configs: [String: AvatarConfig] = [:]
+    @State private var activeKeywords: Set<String> = []
     @State private var showingAddSheet = false
     @State private var editTarget: EditTarget? = nil
     @State private var startAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
@@ -117,74 +123,98 @@ struct MenuBarView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Termavatar")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                Text("Your terminal crew")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button(action: { showingAddSheet = true }) {
-                Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 30, height: 30)
-                    .background(
-                        LinearGradient(
-                            colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
-                            startPoint: .top, endPoint: .bottom
+        VStack(spacing: 0) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Termavatar")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                    HStack(spacing: 6) {
+                        if !configs.isEmpty {
+                            let activeCount = activeKeywords.count
+                            Text("\(activeCount)/\(configs.count) active")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Terminal avatars")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer()
+                Button(action: { showingAddSheet = true }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(
+                            LinearGradient(
+                                colors: [DS.accent, DS.accent.opacity(0.8)],
+                                startPoint: .top, endPoint: .bottom
+                            )
                         )
-                    )
-                    .clipShape(Circle())
-                    .shadow(color: Color.accentColor.opacity(0.3), radius: 4, y: 2)
+                        .clipShape(Circle())
+                        .shadow(color: DS.accent.opacity(0.3), radius: 4, y: 2)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+
+            // Accent line
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [DS.accent.opacity(0.0), DS.accent.opacity(0.2), DS.accent.opacity(0.0)],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                )
+                .frame(height: 1)
+                .padding(.horizontal, 20)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
     }
 
     // MARK: Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 18) {
             Spacer()
             ZStack {
                 Circle()
-                    .fill(Color.accentColor.opacity(0.06))
-                    .frame(width: 90, height: 90)
+                    .fill(DS.accent.opacity(0.05))
+                    .frame(width: 100, height: 100)
                 Circle()
-                    .fill(Color.accentColor.opacity(0.04))
-                    .frame(width: 70, height: 70)
+                    .fill(DS.accent.opacity(0.04))
+                    .frame(width: 76, height: 76)
                 Image(systemName: "person.crop.circle.badge.plus")
-                    .font(.system(size: 34))
-                    .foregroundStyle(Color.accentColor.opacity(0.5))
+                    .font(.system(size: 36))
+                    .foregroundStyle(DS.accent.opacity(0.5))
             }
             VStack(spacing: 6) {
                 Text("No avatars yet")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Add avatars to identify your terminal windows")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                Text("Add avatars to visually identify\nyour terminal windows")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .lineSpacing(2)
             }
             Button(action: { showingAddSheet = true }) {
                 Label("Add Your First Avatar", systemImage: "plus")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-                    .background(Color.accentColor)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 9)
+                    .background(DS.accent)
                     .clipShape(Capsule())
+                    .shadow(color: DS.accent.opacity(0.3), radius: 4, y: 2)
             }
             .buttonStyle(.plain)
             Spacer()
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
     }
 
     // MARK: Avatar Grid
@@ -196,6 +226,7 @@ struct MenuBarView: View {
                     if let config = configs[keyword] {
                         AvatarCard(
                             config: config,
+                            isActive: activeKeywords.contains(keyword),
                             onEdit: { editTarget = EditTarget(keyword) },
                             onRemove: {
                                 AvatarConfig.remove(keyword: keyword)
@@ -206,7 +237,8 @@ struct MenuBarView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
         }
     }
 
@@ -214,28 +246,14 @@ struct MenuBarView: View {
 
     private var footer: some View {
         HStack(spacing: 0) {
-            // Status
-            HStack(spacing: 6) {
-                ZStack {
-                    Circle()
-                        .fill(DS.green.opacity(0.2))
-                        .frame(width: 14, height: 14)
-                    Circle()
-                        .fill(DS.green)
-                        .frame(width: 8, height: 8)
-                }
-                Text("\(configs.count) active")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            // Login toggle
             Toggle(isOn: $startAtLogin) {
-                Text("Auto-start")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Image(systemName: "sunrise")
+                        .font(.system(size: 10))
+                    Text("Auto-start")
+                        .font(.system(size: 11))
+                }
+                .foregroundStyle(.secondary)
             }
             .toggleStyle(.switch)
             .controlSize(.mini)
@@ -248,88 +266,104 @@ struct MenuBarView: View {
                 startAtLogin = (SMAppService.mainApp.status == .enabled)
             }
 
-            Spacer().frame(width: 12)
+            Spacer()
 
-            // Quit
             Button(action: { NSApp.terminate(nil) }) {
-                Image(systemName: "power")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(DS.cardBg)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(DS.border, lineWidth: 1))
+                Text("Quit")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
-            .help("Quit Termavatar")
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(DS.cardBg)
+        .padding(.vertical, 10)
+        .background(
+            Rectangle()
+                .fill(DS.cardBg)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(DS.border)
+                        .frame(height: 1)
+                }
+        )
     }
 
     private func reload() {
         configs = AvatarConfig.loadAll()
+        // Check which avatars are live on terminals right now
+        let windows = discoverWindows(configs: configs)
+        activeKeywords = Set(windows.map { $0.keyword })
         watcher.poll()
     }
 }
 
-// MARK: - Avatar Card (Grid Cell)
+// MARK: - Avatar Card
 
 struct AvatarCard: View {
     let config: AvatarConfig
+    let isActive: Bool
     let onEdit: () -> Void
     let onRemove: () -> Void
     @State private var hovering = false
 
     var body: some View {
         VStack(spacing: 8) {
-            // Avatar photo with active dot
             ZStack(alignment: .topTrailing) {
                 avatarImage
-                    .frame(width: DS.avatarGrid, height: DS.avatarGrid)
+                    .frame(width: DS.gridAvatar, height: DS.gridAvatar)
                     .clipShape(Circle())
-                    .shadow(color: .black.opacity(hovering ? 0.18 : 0.08), radius: hovering ? 6 : 3, y: hovering ? 3 : 1)
+                    .overlay(
+                        Circle()
+                            .stroke(isActive ? DS.green.opacity(0.4) : Color.clear, lineWidth: 2.5)
+                            .frame(width: DS.gridAvatar + 4, height: DS.gridAvatar + 4)
+                    )
+                    .shadow(
+                        color: .black.opacity(hovering ? 0.16 : 0.06),
+                        radius: hovering ? 8 : 3,
+                        y: hovering ? 4 : 1
+                    )
 
-                // Active indicator
+                // Status dot
                 Circle()
-                    .fill(DS.green)
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
-                    .offset(x: 2, y: -1)
+                    .fill(isActive ? DS.green : Color.gray.opacity(0.35))
+                    .frame(width: 11, height: 11)
+                    .overlay(
+                        Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2.5)
+                    )
+                    .offset(x: 1, y: 0)
             }
 
-            // Name
             Text(config.name)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .foregroundStyle(hovering ? .primary : .secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .padding(.horizontal, 4)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: DS.cardRadius)
                 .fill(hovering ? DS.cardHover : DS.cardBg)
         )
         .overlay(
             RoundedRectangle(cornerRadius: DS.cardRadius)
-                .stroke(hovering ? Color.accentColor.opacity(0.3) : DS.border, lineWidth: 1)
+                .stroke(hovering ? DS.borderHover : DS.border, lineWidth: hovering ? 1.5 : 1)
         )
-        .scaleEffect(hovering ? 1.03 : 1.0)
+        .scaleEffect(hovering ? 1.04 : 1.0)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { onEdit() }
         .contextMenu {
             Button(action: onEdit) {
-                Label("Edit", systemImage: "pencil")
+                Label("Edit Avatar", systemImage: "pencil")
             }
             Divider()
             Button(role: .destructive, action: onRemove) {
-                Label("Delete", systemImage: "trash")
+                Label("Delete Avatar", systemImage: "trash")
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: hovering)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovering)
     }
 
     @ViewBuilder
@@ -342,14 +376,14 @@ struct AvatarCard: View {
             Circle()
                 .fill(
                     LinearGradient(
-                        colors: [Color.accentColor.opacity(0.25), Color.accentColor.opacity(0.10)],
+                        colors: [DS.accent.opacity(0.2), DS.accent.opacity(0.08)],
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     )
                 )
                 .overlay(
                     Text(String(config.name.prefix(1)).uppercased())
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundStyle(DS.accent)
                 )
         }
     }
@@ -370,10 +404,16 @@ struct AddAvatarSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Header
             VStack(spacing: 6) {
-                Image(systemName: "person.crop.circle.badge.plus")
-                    .font(.system(size: 30))
-                    .foregroundStyle(Color.accentColor)
+                ZStack {
+                    Circle()
+                        .fill(DS.accent.opacity(0.08))
+                        .frame(width: 56, height: 56)
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 26))
+                        .foregroundStyle(DS.accent)
+                }
                 Text("New Avatar")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                 Text("Add a floating avatar to your terminal")
@@ -381,12 +421,14 @@ struct AddAvatarSheet: View {
                     .foregroundStyle(.secondary)
             }
             .padding(.top, 26)
-            .padding(.bottom, 22)
+            .padding(.bottom, 24)
 
+            // Photo
             photoSection
-                .padding(.bottom, 22)
+                .padding(.bottom, 24)
 
-            VStack(spacing: 14) {
+            // Fields
+            VStack(spacing: 16) {
                 FormField(label: "Name", placeholder: "e.g. Jack", text: $name)
                     .onChange(of: name) { _, newValue in
                         if keyword.isEmpty || keyword == previousName {
@@ -414,9 +456,9 @@ struct AddAvatarSheet: View {
                 .padding(.top, 12)
             }
 
-            Spacer().frame(height: 22)
+            Spacer().frame(height: 24)
 
-            sheetButtons(
+            SheetButtons(
                 cancelAction: { isPresented = false },
                 confirmLabel: "Add Avatar",
                 confirmAction: addAvatar,
@@ -435,21 +477,25 @@ struct AddAvatarSheet: View {
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: DS.avatarLarge, height: DS.avatarLarge)
+                        .frame(width: DS.sheetAvatar, height: DS.sheetAvatar)
                         .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+                        .shadow(color: .black.opacity(0.15), radius: 5, y: 2)
                 } else {
                     Circle()
                         .fill(DS.cardBg)
-                        .frame(width: DS.avatarLarge, height: DS.avatarLarge)
+                        .frame(width: DS.sheetAvatar, height: DS.sheetAvatar)
                         .overlay(
                             Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
                                 .foregroundStyle(Color.primary.opacity(0.12))
                         )
                         .overlay(
-                            Image(systemName: "camera.fill")
-                                .font(.system(size: 22))
-                                .foregroundStyle(.tertiary)
+                            VStack(spacing: 3) {
+                                Image(systemName: "camera.fill")
+                                    .font(.system(size: 20))
+                                Text("Tap")
+                                    .font(.system(size: 9, weight: .medium))
+                            }
+                            .foregroundStyle(.tertiary)
                         )
                 }
             }
@@ -458,7 +504,7 @@ struct AddAvatarSheet: View {
             Button("Choose Photo") { pickImage() }
                 .font(.system(size: 12, weight: .medium))
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(DS.accent)
         }
     }
 
@@ -511,9 +557,9 @@ struct EditAvatarSheet: View {
             VStack(spacing: 12) {
                 ZStack {
                     currentPhoto
-                        .frame(width: DS.avatarLarge, height: DS.avatarLarge)
+                        .frame(width: DS.sheetAvatar, height: DS.sheetAvatar)
                         .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+                        .shadow(color: .black.opacity(0.15), radius: 5, y: 2)
 
                     Circle()
                         .fill(.ultraThinMaterial)
@@ -523,7 +569,7 @@ struct EditAvatarSheet: View {
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         )
-                        .offset(x: 24, y: 24)
+                        .offset(x: 26, y: 26)
                         .onTapGesture { pickImage() }
                 }
 
@@ -531,17 +577,17 @@ struct EditAvatarSheet: View {
                     .font(.system(size: 17, weight: .bold, design: .rounded))
             }
             .padding(.top, 26)
-            .padding(.bottom, 22)
+            .padding(.bottom, 24)
 
-            VStack(spacing: 14) {
+            VStack(spacing: 16) {
                 FormField(label: "Name", placeholder: "Display name", text: $name)
                 FormField(label: "Match Keyword", placeholder: "Text in terminal title", text: $keyword)
             }
             .padding(.horizontal, 26)
 
-            Spacer().frame(height: 22)
+            Spacer().frame(height: 24)
 
-            sheetButtons(
+            SheetButtons(
                 cancelAction: { isPresented = false },
                 confirmLabel: "Save Changes",
                 confirmAction: save,
@@ -623,6 +669,8 @@ struct FormField: View {
     @Binding var text: String
     var hint: String? = nil
 
+    @FocusState private var isFocused: Bool
+
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label.uppercased())
@@ -632,7 +680,8 @@ struct FormField: View {
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .padding(.horizontal, 10)
+                .focused($isFocused)
+                .padding(.horizontal, 11)
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
@@ -640,8 +689,9 @@ struct FormField: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(DS.border, lineWidth: 1)
+                        .stroke(isFocused ? DS.accent.opacity(0.5) : DS.border, lineWidth: isFocused ? 1.5 : 1)
                 )
+                .animation(.easeInOut(duration: 0.15), value: isFocused)
             if let hint = hint {
                 Text(hint)
                     .font(.system(size: 10))
@@ -651,39 +701,47 @@ struct FormField: View {
     }
 }
 
-private func sheetButtons(
-    cancelAction: @escaping () -> Void,
-    confirmLabel: String,
-    confirmAction: @escaping () -> Void,
-    confirmDisabled: Bool
-) -> some View {
-    HStack(spacing: 10) {
-        Button(action: cancelAction) {
-            Text("Cancel")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 36)
-                .background(DS.cardBg)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.border, lineWidth: 1))
-        }
-        .keyboardShortcut(.cancelAction)
-        .buttonStyle(.plain)
+struct SheetButtons: View {
+    let cancelAction: () -> Void
+    let confirmLabel: String
+    let confirmAction: () -> Void
+    let confirmDisabled: Bool
 
-        Button(action: confirmAction) {
-            Text(confirmLabel)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 36)
-                .background(confirmDisabled ? Color.accentColor.opacity(0.4) : Color.accentColor)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .shadow(color: Color.accentColor.opacity(confirmDisabled ? 0 : 0.25), radius: 3, y: 1)
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: cancelAction) {
+                Text("Cancel")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 36)
+                    .background(DS.cardBg)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.btnRadius))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.btnRadius)
+                            .stroke(DS.border, lineWidth: 1)
+                    )
+            }
+            .keyboardShortcut(.cancelAction)
+            .buttonStyle(.plain)
+
+            Button(action: confirmAction) {
+                Text(confirmLabel)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 36)
+                    .background(confirmDisabled ? DS.accent.opacity(0.35) : DS.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.btnRadius))
+                    .shadow(
+                        color: DS.accent.opacity(confirmDisabled ? 0 : 0.25),
+                        radius: 3, y: 1
+                    )
+            }
+            .keyboardShortcut(.defaultAction)
+            .buttonStyle(.plain)
+            .disabled(confirmDisabled)
         }
-        .keyboardShortcut(.defaultAction)
-        .buttonStyle(.plain)
-        .disabled(confirmDisabled)
     }
 }
 
