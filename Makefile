@@ -2,35 +2,42 @@ PREFIX ?= /usr/local
 CONFIG_DIR = $(HOME)/.termavatar
 
 SWIFTC = swiftc
-SWIFTFLAGS = -O -framework AppKit -framework ApplicationServices
+SWIFTFLAGS = -O -framework SwiftUI -framework AppKit -framework ApplicationServices -framework ServiceManagement
 
 BUILD_DIR = build
+APP_NAME = Termavatar.app
+APP_DIR = $(BUILD_DIR)/$(APP_NAME)
+APP_BIN = $(APP_DIR)/Contents/MacOS/termavatar
 
-OVERLAY_SRC = Sources/Overlay.swift
-WATCHER_SRC = Sources/Watcher.swift
-OVERLAY_BIN = $(BUILD_DIR)/termavatar-overlay
-WATCHER_BIN = $(BUILD_DIR)/termavatar-watcher
+# All source files for the unified binary
+SOURCES = Sources/main.swift Sources/Overlay.swift Sources/Watcher.swift \
+          Sources/MenuBar.swift Sources/Config.swift
 
-.PHONY: all build install uninstall clean
+.PHONY: all app build install uninstall clean
 
-all: build
+all: app
 
-build:
-	mkdir -p $(BUILD_DIR)
-	$(SWIFTC) $(SWIFTFLAGS) -o $(OVERLAY_BIN) $(OVERLAY_SRC)
-	$(SWIFTC) $(SWIFTFLAGS) -o $(WATCHER_BIN) $(WATCHER_SRC)
+# Build the .app bundle (recommended)
+app:
+	mkdir -p $(APP_DIR)/Contents/MacOS
+	mkdir -p $(APP_DIR)/Contents/Resources
+	$(SWIFTC) $(SWIFTFLAGS) -o $(APP_BIN) $(SOURCES)
+	cp Info.plist $(APP_DIR)/Contents/
+	@echo ""
+	@echo "Built $(APP_DIR)"
+	@echo "Run:  open $(APP_DIR)"
 
-install: build
+# Alias for backwards compatibility
+build: app
+
+install: app
 	mkdir -p $(PREFIX)/bin
 	mkdir -p $(CONFIG_DIR)
-	cp $(OVERLAY_BIN) $(PREFIX)/bin/termavatar-overlay
-	cp $(WATCHER_BIN) $(PREFIX)/bin/termavatar-watcher
-	cp termavatar $(PREFIX)/bin/termavatar
-	chmod +x $(PREFIX)/bin/termavatar
+	cp -R $(APP_DIR) /Applications/$(APP_NAME)
+	@echo "Installed to /Applications/$(APP_NAME)"
 
 uninstall:
-	rm -f $(PREFIX)/bin/termavatar-overlay
-	rm -f $(PREFIX)/bin/termavatar-watcher
+	rm -rf /Applications/$(APP_NAME)
 	rm -f $(PREFIX)/bin/termavatar
 
 clean:

@@ -539,91 +539,47 @@ final class OverlayApp: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - CLI
+// MARK: - Overlay Entry Point
 
-struct Config {
-    var imagePath: String = ""
-    var name: String = ""
+/// Parses overlay CLI arguments and runs the overlay as an NSApplication.
+/// Called when the binary is invoked with `--overlay <image> [options]`.
+func runOverlayMode(args: [String]) {
+    var imagePath = ""
+    var name = ""
     var size: CGFloat = 80
-    var corner: String = "br"
+    var corner = "br"
     var opacity: CGFloat = 0.92
-    var app: String = "ghostty"
+    var appTarget = "ghostty"
     var title: String? = nil
     var pid: pid_t? = nil
-}
 
-func printUsage() -> Never {
-    let terminals = supportedTerminals.joined(separator: ", ")
-    fputs("""
-    termavatar — floating avatar for terminal windows
-
-    USAGE
-      termavatar-overlay <image> [options]
-
-    OPTIONS
-      --name <text>       Label shown below the avatar
-      --size <px>         Avatar diameter in points (default: 80)
-      --corner <pos>      tl, tr, bl, br (default: br)
-      --opacity <0-1>     Window opacity (default: 0.92)
-      --app <name>        Terminal app to attach to (default: ghostty)
-      --title <keyword>   Only match windows whose title contains this string
-      --pid <pid>         Only search windows in this specific process
-      -h, --help          Show this help
-
-    SUPPORTED TERMINALS
-      \(terminals)
-
-    INTERACTIONS
-      Drag the avatar when its terminal is minimized to reposition it.
-      Click a parked avatar to un-minimize and restore its terminal.
-      Right-click the avatar to quit.
-
-    NOTIFICATIONS
-      When ~/.termavatar/notify/<keyword> exists, a red dot appears on
-      the parked avatar and a sound plays. Use Claude Code's Notification
-      hook to create these signal files automatically.
-
-    """, stderr)
-    exit(0)
-}
-
-func parseArgs() -> Config {
-    let args = CommandLine.arguments
-    guard args.count >= 2 else {
-        fputs("termavatar: missing image path. Use --help for usage.\n", stderr)
+    guard !args.isEmpty else {
+        fputs("termavatar: --overlay requires an image path\n", stderr)
         exit(1)
     }
-    if args[1] == "--help" || args[1] == "-h" { printUsage() }
+    imagePath = (args[0] as NSString).expandingTildeInPath
 
-    var cfg = Config()
-    cfg.imagePath = (args[1] as NSString).expandingTildeInPath
-
-    var i = 2
+    var i = 1
     while i < args.count {
         switch args[i] {
-        case "--name"    where i + 1 < args.count: cfg.name    = args[i+1]; i += 2
-        case "--size"    where i + 1 < args.count: cfg.size    = CGFloat(Double(args[i+1]) ?? 80); i += 2
-        case "--corner"  where i + 1 < args.count: cfg.corner  = args[i+1]; i += 2
-        case "--opacity" where i + 1 < args.count: cfg.opacity = CGFloat(Double(args[i+1]) ?? 0.92); i += 2
-        case "--app"     where i + 1 < args.count: cfg.app     = args[i+1]; i += 2
-        case "--title"   where i + 1 < args.count: cfg.title   = args[i+1]; i += 2
-        case "--pid"     where i + 1 < args.count: cfg.pid     = pid_t(args[i+1]); i += 2
-        case "--help", "-h": printUsage()
-        default:
-            fputs("termavatar: unknown option '\(args[i])'\n", stderr)
-            i += 1
+        case "--name"    where i + 1 < args.count: name      = args[i+1]; i += 2
+        case "--size"    where i + 1 < args.count: size      = CGFloat(Double(args[i+1]) ?? 80); i += 2
+        case "--corner"  where i + 1 < args.count: corner    = args[i+1]; i += 2
+        case "--opacity" where i + 1 < args.count: opacity   = CGFloat(Double(args[i+1]) ?? 0.92); i += 2
+        case "--app"     where i + 1 < args.count: appTarget = args[i+1]; i += 2
+        case "--title"   where i + 1 < args.count: title     = args[i+1]; i += 2
+        case "--pid"     where i + 1 < args.count: pid       = pid_t(args[i+1]); i += 2
+        default: i += 1
         }
     }
-    return cfg
-}
 
-let cfg = parseArgs()
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-let delegate = OverlayApp(
-    imagePath: cfg.imagePath, agentName: cfg.name, avatarSize: cfg.size,
-    corner: cfg.corner, opacity: cfg.opacity, appTarget: cfg.app, titleKeyword: cfg.title,
-    targetPID: cfg.pid
-)
-app.delegate = delegate
-app.run()
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let delegate = OverlayApp(
+        imagePath: imagePath, agentName: name, avatarSize: size,
+        corner: corner, opacity: opacity, appTarget: appTarget,
+        titleKeyword: title, targetPID: pid
+    )
+    app.delegate = delegate
+    app.run()
+}
