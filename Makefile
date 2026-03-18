@@ -23,6 +23,7 @@ app:
 	mkdir -p $(APP_DIR)/Contents/Resources
 	$(SWIFTC) $(SWIFTFLAGS) -o $(APP_BIN) $(SOURCES)
 	cp Info.plist $(APP_DIR)/Contents/
+	cp Resources/AppIcon.icns $(APP_DIR)/Contents/Resources/
 	@echo ""
 	@echo "Built $(APP_DIR)"
 	@echo "Run:  open $(APP_DIR)"
