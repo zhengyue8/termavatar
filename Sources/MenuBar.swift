@@ -8,11 +8,11 @@ import ServiceManagement
 // MARK: - Design System
 
 private enum DS {
-    static let popW: CGFloat = 320
-    static let popH: CGFloat = 440
-    static let sheetW: CGFloat = 340
-    static let rowAvatar: CGFloat = 42
-    static let sheetAvatar: CGFloat = 80
+    static let popW: CGFloat = 250
+    static let popH: CGFloat = 370
+    static let sheetW: CGFloat = 290
+    static let rowAvatar: CGFloat = 32
+    static let sheetAvatar: CGFloat = 72
     static let btnR: CGFloat = 10
 
     static let green = Color(nsColor: NSColor(red: 0.30, green: 0.78, blue: 0.47, alpha: 1))
@@ -62,9 +62,13 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         popover = NSPopover()
         popover.contentSize = NSSize(width: DS.popW, height: DS.popH)
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(
-            rootView: MenuBarView(watcher: watcher)
+
+        let hostingView = NSHostingView(rootView:
+            MenuBarView(watcher: watcher)
+                .background(VisualEffectBackground())
         )
+        popover.contentViewController = NSViewController()
+        popover.contentViewController!.view = hostingView
 
         watcher.start()
     }
@@ -132,46 +136,32 @@ struct MenuBarView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .center) {
-            HStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(
-                            LinearGradient(
-                                colors: [DS.accent, DS.accent.opacity(0.7)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 30, height: 30)
-                    Image(systemName: "person.2.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Termavatar")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                    if !configs.isEmpty {
-                        Text("\(activeKeywords.count) of \(configs.count) on screen")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+        HStack(spacing: 5) {
+            Text("Termavatar")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+            if !configs.isEmpty {
+                Text("\(activeKeywords.count)/\(configs.count)")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
             }
             Spacer()
             Button(action: { showingAddSheet = true }) {
                 Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(DS.accent)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 22, height: 22)
                     .background(DS.accent.opacity(0.1))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
     }
 
     // MARK: Empty State
@@ -255,9 +245,9 @@ struct MenuBarView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(DS.cardBg)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial)
     }
 
     private func reload() {
@@ -277,53 +267,39 @@ struct AvatarRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             // Avatar with status dot
             ZStack(alignment: .bottomTrailing) {
                 avatarImage
                     .frame(width: DS.rowAvatar, height: DS.rowAvatar)
                     .clipShape(Circle())
 
-                // Small green/grey dot
                 Circle()
-                    .fill(isActive ? DS.green : Color.gray.opacity(0.3))
-                    .frame(width: 8, height: 8)
-                    .overlay(
-                        Circle().stroke(Color(nsColor: .controlBackgroundColor), lineWidth: 1.5)
-                    )
-                    .offset(x: 1, y: 1)
+                    .fill(isActive ? DS.green : Color.gray.opacity(0.25))
+                    .frame(width: 6, height: 6)
+                    .overlay(Circle().stroke(Color(nsColor: .controlBackgroundColor), lineWidth: 1))
             }
 
-            // Name
-            VStack(alignment: .leading, spacing: 2) {
-                Text(config.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-                if config.keyword != config.name {
-                    Text(config.keyword)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-            }
+            Text(config.name)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
 
-            Spacer()
+            Spacer(minLength: 2)
 
-            // Hover actions
             if hovering {
-                HStack(spacing: 6) {
+                HStack(spacing: 3) {
                     rowButton(icon: "pencil", action: onEdit)
                     rowButton(icon: "trash", action: onRemove, tint: DS.red.opacity(0.7))
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .transition(.opacity)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 5)
                 .fill(hovering ? DS.hover : Color.clear)
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 4)
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
@@ -339,10 +315,10 @@ struct AvatarRow: View {
     private func rowButton(icon: String, action: @escaping () -> Void, tint: Color = .secondary) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 8, weight: .medium))
                 .foregroundStyle(tint)
-                .frame(width: 24, height: 24)
-                .background(Color.primary.opacity(0.05))
+                .frame(width: 18, height: 18)
+                .background(.ultraThinMaterial)
                 .clipShape(Circle())
         }
         .buttonStyle(.plain)
@@ -711,6 +687,19 @@ struct SheetActions: View {
             .disabled(disabled)
         }
     }
+}
+
+// MARK: - Visual Effect Background
+
+struct VisualEffectBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .popover
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: - Entry Point
