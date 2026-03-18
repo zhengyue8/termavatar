@@ -8,26 +8,23 @@ import ServiceManagement
 // MARK: - Design System
 
 private enum DS {
-    static let popW: CGFloat = 360
-    static let popH: CGFloat = 460
+    static let popW: CGFloat = 320
+    static let popH: CGFloat = 440
     static let sheetW: CGFloat = 340
-    static let gridAvatar: CGFloat = 64
+    static let rowAvatar: CGFloat = 42
     static let sheetAvatar: CGFloat = 80
-    static let cardR: CGFloat = 14
     static let btnR: CGFloat = 10
 
     static let green = Color(nsColor: NSColor(red: 0.30, green: 0.78, blue: 0.47, alpha: 1))
     static let red = Color(nsColor: NSColor(red: 0.90, green: 0.32, blue: 0.32, alpha: 1))
     static let accent = Color.accentColor
     static let cardBg = Color.primary.opacity(0.035)
-    static let cardHover = Color.primary.opacity(0.08)
+    static let hover = Color.primary.opacity(0.06)
     static let subtle = Color.primary.opacity(0.06)
 }
 
 // MARK: - Active Status Detection
 
-/// Reads the live watcher's active_sessions.txt to find which keywords are on screen.
-/// Falls back to direct AX API query if the file is unavailable.
 private func detectActiveKeywords(configs: [String: AvatarConfig]) -> Set<String> {
     let sessionsPath = (NSHomeDirectory() as NSString)
         .appendingPathComponent(".edgion/active_sessions.txt")
@@ -41,7 +38,6 @@ private func detectActiveKeywords(configs: [String: AvatarConfig]) -> Set<String
         }
         if !active.isEmpty { return active }
     }
-    // Fallback: direct query
     return Set(discoverWindows(configs: configs).map { $0.keyword })
 }
 
@@ -103,19 +99,13 @@ struct MenuBarView: View {
     @State private var editTarget: EditTarget? = nil
     @State private var startAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10),
-    ]
-
     var body: some View {
         VStack(spacing: 0) {
             header
             if configs.isEmpty {
                 emptyState
             } else {
-                avatarGrid
+                avatarList
             }
             Spacer(minLength: 0)
             footer
@@ -144,7 +134,6 @@ struct MenuBarView: View {
     private var header: some View {
         HStack(alignment: .center) {
             HStack(spacing: 8) {
-                // App icon
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(
@@ -153,18 +142,18 @@ struct MenuBarView: View {
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                         )
-                        .frame(width: 32, height: 32)
+                        .frame(width: 30, height: 30)
                     Image(systemName: "person.2.fill")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Termavatar")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
                     if !configs.isEmpty {
                         Text("\(activeKeywords.count) of \(configs.count) on screen")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -172,48 +161,41 @@ struct MenuBarView: View {
             Spacer()
             Button(action: { showingAddSheet = true }) {
                 Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(DS.accent)
-                    .frame(width: 28, height: 28)
-                    .background(DS.accent.opacity(0.12))
+                    .frame(width: 26, height: 26)
+                    .background(DS.accent.opacity(0.1))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
     }
 
     // MARK: Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             Spacer()
-            ZStack {
-                Circle()
-                    .fill(DS.accent.opacity(0.05))
-                    .frame(width: 96, height: 96)
-                Image(systemName: "person.crop.circle.badge.plus")
-                    .font(.system(size: 38))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(DS.accent)
-            }
-            VStack(spacing: 5) {
+            Image(systemName: "person.crop.circle.badge.plus")
+                .font(.system(size: 36))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(DS.accent)
+            VStack(spacing: 4) {
                 Text("No avatars yet")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                Text("Add avatars to visually identify\nyour terminal windows")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                Text("Add avatars to identify your terminals")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(1)
             }
             Button(action: { showingAddSheet = true }) {
                 Label("Add Avatar", systemImage: "plus")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 7)
                     .background(DS.accent)
                     .clipShape(Capsule())
             }
@@ -223,14 +205,14 @@ struct MenuBarView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: Avatar Grid
+    // MARK: Avatar List
 
-    private var avatarGrid: some View {
+    private var avatarList: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            LazyVGrid(columns: columns, spacing: 12) {
+            LazyVStack(spacing: 1) {
                 ForEach(configs.keys.sorted(), id: \.self) { keyword in
                     if let config = configs[keyword] {
-                        AvatarCard(
+                        AvatarRow(
                             config: config,
                             isActive: activeKeywords.contains(keyword),
                             onEdit: { editTarget = EditTarget(keyword) },
@@ -242,9 +224,7 @@ struct MenuBarView: View {
                     }
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 8)
-            .padding(.bottom, 12)
+            .padding(.vertical, 4)
         }
     }
 
@@ -275,7 +255,7 @@ struct MenuBarView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(DS.cardBg)
     }
@@ -287,9 +267,9 @@ struct MenuBarView: View {
     }
 }
 
-// MARK: - Avatar Card
+// MARK: - Avatar Row
 
-struct AvatarCard: View {
+struct AvatarRow: View {
     let config: AvatarConfig
     let isActive: Bool
     let onEdit: () -> Void
@@ -297,73 +277,75 @@ struct AvatarCard: View {
     @State private var hovering = false
 
     var body: some View {
-        VStack(spacing: 7) {
-            // Avatar
+        HStack(spacing: 12) {
+            // Avatar with status dot
             ZStack(alignment: .bottomTrailing) {
                 avatarImage
-                    .frame(width: DS.gridAvatar, height: DS.gridAvatar)
+                    .frame(width: DS.rowAvatar, height: DS.rowAvatar)
                     .clipShape(Circle())
-                    .overlay(
-                        Circle()
-                            .strokeBorder(
-                                isActive ? DS.green.opacity(0.5) : Color.clear,
-                                lineWidth: 2.5
-                            )
-                    )
-                    .shadow(
-                        color: .black.opacity(hovering ? 0.15 : 0.05),
-                        radius: hovering ? 8 : 3,
-                        y: hovering ? 3 : 1
-                    )
 
-                // Status dot
-                ZStack {
-                    Circle()
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                        .frame(width: 14, height: 14)
-                    Circle()
-                        .fill(isActive ? DS.green : Color.gray.opacity(0.3))
-                        .frame(width: 10, height: 10)
-                }
-                .offset(x: 2, y: 2)
+                // Small green/grey dot
+                Circle()
+                    .fill(isActive ? DS.green : Color.gray.opacity(0.3))
+                    .frame(width: 8, height: 8)
+                    .overlay(
+                        Circle().stroke(Color(nsColor: .controlBackgroundColor), lineWidth: 1.5)
+                    )
+                    .offset(x: 1, y: 1)
             }
 
             // Name
-            Text(config.name)
-                .font(.system(size: 11, weight: hovering ? .bold : .semibold, design: .rounded))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(isActive ? .primary : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(config.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                if config.keyword != config.name {
+                    Text(config.keyword)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            // Hover actions
+            if hovering {
+                HStack(spacing: 6) {
+                    rowButton(icon: "pencil", action: onEdit)
+                    rowButton(icon: "trash", action: onRemove, tint: DS.red.opacity(0.7))
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: DS.cardR)
-                .fill(hovering ? DS.cardHover : DS.cardBg)
+            RoundedRectangle(cornerRadius: 8)
+                .fill(hovering ? DS.hover : Color.clear)
+                .padding(.horizontal, 6)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.cardR)
-                .strokeBorder(
-                    hovering ? DS.accent.opacity(0.3) : DS.subtle,
-                    lineWidth: hovering ? 1.5 : 0.5
-                )
-        )
-        .scaleEffect(hovering ? 1.05 : 1.0)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { onEdit() }
         .contextMenu {
-            Button(action: onEdit) {
-                Label("Edit", systemImage: "pencil")
-            }
+            Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
             Divider()
-            Button(role: .destructive, action: onRemove) {
-                Label("Delete", systemImage: "trash")
-            }
+            Button(role: .destructive, action: onRemove) { Label("Delete", systemImage: "trash") }
         }
-        .animation(.spring(response: 0.25, dampingFraction: 0.75), value: hovering)
+        .animation(.easeOut(duration: 0.15), value: hovering)
+    }
+
+    private func rowButton(icon: String, action: @escaping () -> Void, tint: Color = .secondary) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 24, height: 24)
+                .background(Color.primary.opacity(0.05))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -382,7 +364,7 @@ struct AvatarCard: View {
                 )
                 .overlay(
                     Text(String(config.name.prefix(1)).uppercased())
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.accent)
                 )
         }
@@ -404,16 +386,14 @@ struct AddAvatarSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            sheetHeader(icon: "person.crop.circle.badge.plus", title: "New Avatar",
+            sheetHeader(icon: "person.crop.circle.badge.plus",
+                        title: "New Avatar",
                         subtitle: "Add a floating avatar to your terminal")
             .padding(.bottom, 20)
 
-            // Photo
             photoSection
                 .padding(.bottom, 20)
 
-            // Fields
             VStack(spacing: 14) {
                 FormField(label: "Name", placeholder: "e.g. Jack", text: $name)
                     .onChange(of: name) { _, newValue in
@@ -532,7 +512,6 @@ struct EditAvatarSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Photo with camera button
             VStack(spacing: 10) {
                 ZStack {
                     currentPhoto
@@ -558,7 +537,6 @@ struct EditAvatarSheet: View {
             .padding(.top, 26)
             .padding(.bottom, 22)
 
-            // Fields
             VStack(spacing: 14) {
                 FormField(label: "Name", placeholder: "Display name", text: $name)
                 FormField(label: "Match Keyword", placeholder: "Text in terminal title", text: $keyword)
