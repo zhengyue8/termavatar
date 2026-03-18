@@ -46,7 +46,6 @@ private func detectActiveKeywords(configs: [String: AvatarConfig]) -> Set<String
 final class MenuBarDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
-    private let watcher = AvatarWatcher()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AvatarConfig.ensureDirectories()
@@ -64,17 +63,12 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
 
         let hostingView = NSHostingView(rootView:
-            MenuBarView(watcher: watcher)
+            MenuBarView()
                 .background(VisualEffectBackground())
         )
         popover.contentViewController = NSViewController()
         popover.contentViewController!.view = hostingView
 
-        watcher.start()
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        watcher.stop()
     }
 
     @objc private func togglePopover() {
@@ -96,7 +90,6 @@ private struct EditTarget: Identifiable {
 }
 
 struct MenuBarView: View {
-    let watcher: AvatarWatcher
     @State private var configs: [String: AvatarConfig] = [:]
     @State private var activeKeywords: Set<String> = []
     @State private var showingAddSheet = false
@@ -253,7 +246,6 @@ struct MenuBarView: View {
     private func reload() {
         configs = AvatarConfig.loadAll()
         activeKeywords = detectActiveKeywords(configs: configs)
-        watcher.poll()
     }
 }
 
